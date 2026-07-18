@@ -78,6 +78,10 @@ def load_chroma_db():
             model_name=model_path,
             model_kwargs={"device": "cuda"},
             encode_kwargs={"normalize_embeddings": True},
+            query_encode_kwargs={
+                "normalize_embeddings": True,
+                "prompt_name": "query",
+            },
         )
     except Exception as e:
         raise RuntimeError(
