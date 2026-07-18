@@ -38,7 +38,7 @@ agents: dict[str, Agent] = {
         graph_like=research_assistant,
     ),
     "rag-assistant": Agent(
-        description="A RAG assistant with access to information in a database.",
+        description="DocPilot: a grounded assistant for indexed PDF and DOCX documents.",
         graph_like=rag_assistant,
     ),
     "command-agent": Agent(description="A command agent.", graph_like=command_agent),

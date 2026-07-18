@@ -1,10 +1,11 @@
 import math
+import os
 import re
 
 import numexpr
 from langchain_chroma import Chroma
 from langchain_core.tools import BaseTool, tool
-from langchain_openai import OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 
 def calculator_func(expression: str) -> str:
@@ -44,37 +45,63 @@ calculator.name = "Calculator"
 
 # Format retrieved documents
 def format_contexts(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
+    parts = []
+    for i, doc in enumerate(docs, start=1):
+        source = doc.metadata.get("source", "Unknown")
+        parts.append(f"Document {i}\nSource: {source}\nContent: {doc.page_content}")
+    return "\n\n".join(parts)
+
+
+def _get_embedding_model_path() -> str:
+    path = os.environ.get(
+        "EMBEDDING_MODEL_PATH",
+        os.path.join(os.path.expanduser("~"), "Models", "Qwen3-Embedding-0.6B"),
+    )
+    if not os.path.isdir(path):
+        raise RuntimeError(
+            f"Embedding model directory not found: {path}. "
+            "Set EMBEDDING_MODEL_PATH env var or place the model at the default location."
+        )
+    return path
+
+
+def _get_chroma_db_path() -> str:
+    return os.environ.get("CHROMA_DB_PATH", "./chroma_db_qwen3_test")
 
 
 def load_chroma_db():
-    # Create the embedding function for our project description database
+    model_path = _get_embedding_model_path()
+    db_path = _get_chroma_db_path()
+
     try:
-        embeddings = OpenAIEmbeddings()
+        embeddings = HuggingFaceEmbeddings(
+            model_name=model_path,
+            model_kwargs={"device": "cuda"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
     except Exception as e:
         raise RuntimeError(
-            "Failed to initialize OpenAIEmbeddings. Ensure the OpenAI API key is set."
+            f"Failed to initialize HuggingFaceEmbeddings with model at {model_path}."
         ) from e
 
-    # Load the stored vector database
-    chroma_db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
-    retriever = chroma_db.as_retriever(search_kwargs={"k": 5})
+    chroma_db = Chroma(persist_directory=db_path, embedding_function=embeddings)
+    retriever = chroma_db.as_retriever(search_kwargs={"k": 3})
     return retriever
 
 
 def database_search_func(query: str) -> str:
-    """Searches chroma_db for information in the company's handbook."""
-    # Get the chroma retriever
+    """Searches the configured DocPilot PDF/DOCX knowledge base via ChromaDB.
+
+    Returns relevant text fragments and source metadata from indexed documents.
+    """
     retriever = load_chroma_db()
 
-    # Search the database for relevant documents
     documents = retriever.invoke(query)
 
-    # Format the documents into a string
     context_str = format_contexts(documents)
 
     return context_str
 
 
 database_search: BaseTool = tool(database_search_func)
-database_search.name = "Database_Search"  # Update name with the purpose of your database
+database_search.name = "Database_Search"

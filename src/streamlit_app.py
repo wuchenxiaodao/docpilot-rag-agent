@@ -24,7 +24,7 @@ from voice import VoiceManager
 # The app heavily uses AgentClient to interact with the agent's FastAPI endpoints.
 
 
-APP_TITLE = "Agent Service Toolkit"
+APP_TITLE = "DocPilot"
 APP_ICON = "🧰"
 USER_ID_COOKIE = "user_id"
 
@@ -128,7 +128,7 @@ async def main() -> None:
         st.header(f"{APP_ICON} {APP_TITLE}")
 
         ""
-        "Full toolkit for running an AI agent service built with LangGraph, FastAPI and Streamlit"
+        "DocPilot — grounded RAG agent for PDF/DOCX documents, built on agent-service-toolkit (LangGraph + FastAPI + Streamlit)"
         ""
 
         if st.button(":material/chat: New Chat", use_container_width=True):
@@ -228,8 +228,7 @@ async def main() -> None:
             case "research-assistant":
                 WELCOME = "Hello! I'm an AI-powered research assistant with web search and a calculator. Ask me anything!"
             case "rag-assistant":
-                WELCOME = """Hello! I'm an AI-powered Company Policy & HR assistant with access to AcmeTech's Employee Handbook.
-                I can help you find information about benefits, remote work, time-off policies, company values, and more. Ask me anything!"""
+                WELCOME = """Hello! I'm DocPilot, a grounded knowledge assistant. I can answer questions based on indexed PDF and DOCX documents. Ask me anything!"""
             case _:
                 WELCOME = "Hello! I'm an AI agent. Ask me anything!"
 
