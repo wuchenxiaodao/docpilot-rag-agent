@@ -2,10 +2,10 @@ import os
 import shutil
 
 from dotenv import load_dotenv
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader
-from langchain_openai import OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -18,8 +18,20 @@ def create_chroma_db(
     chunk_size: int = 2000,
     overlap: int = 500,
 ):
-    embeddings = OpenAIEmbeddings(api_key=os.environ["OPENAI_API_KEY"])
+    model_path = os.path.join(
+        os.path.expanduser("~"),
+        "Models",
+        "Qwen3-Embedding-0.6B",
+    )
 
+    if not os.path.isdir(model_path):
+        raise FileNotFoundError(f"Embedding model not found: {model_path}")
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name=model_path,
+        model_kwargs={"device": "cuda"},
+        encode_kwargs={"normalize_embeddings": True},
+    )
     # Initialize Chroma vector store
     if delete_chroma_db and os.path.exists(db_name):
         shutil.rmtree(db_name)
@@ -69,8 +81,11 @@ if __name__ == "__main__":
     folder_path = "./data"
 
     # Create the Chroma database
-    chroma = create_chroma_db(folder_path=folder_path)
-
+    chroma = create_chroma_db(
+        folder_path=folder_path,
+        db_name="chroma_db_qwen3_test",
+        delete_chroma_db=True,
+    )
     # Create retriever from the Chroma database
     retriever = chroma.as_retriever(search_kwargs={"k": 3})
 
@@ -80,4 +95,4 @@ if __name__ == "__main__":
 
     # Display results
     for i, doc in enumerate(similar_docs, start=1):
-        print(f"\n🔹 Result {i}:\n{doc.page_content}\nTags: {doc.metadata.get('source', [])}")
+        print(f"\nResult {i}:\n{doc.page_content}\nTags: {doc.metadata.get('source', [])}")
