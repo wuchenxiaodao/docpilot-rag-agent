@@ -12,7 +12,7 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
 MODEL_PATH = os.path.join(os.path.expanduser("~"), "Models", "Qwen3-Embedding-0.6B")
-CHROMA_DB_PATH = "./chroma_db_qwen3_test"
+CHROMA_DB_PATH = os.environ.get("CHROMA_DB_PATH", "./chroma_db_qwen3_test")
 
 # ── Questions (10) ──────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ in_domain = [
     {
         "id": "Q5",
         "question": "What should employees do about suspicious emails?",
-        "expected_evidence": "report suspicious emails or activity to IT immediately",
+        "expected_evidence": "suspicious emails or activity to IT immediately",
     },
 ]
 

@@ -188,6 +188,10 @@ cython_debug/
 *.sqlite3
 *.bin
 
+# Chroma database directories (experiments)
+chroma_db_qwen3_test/
+chroma_db_qwen3_semantic_chunks/
+
 # Private Credentials, ignore everything in the folder but the .gitkeep file
 privatecredentials/*
 !privatecredentials/.gitkeep
