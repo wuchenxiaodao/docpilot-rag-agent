@@ -83,6 +83,30 @@ class TestFormatContexts:
         assert "Content: Line1\nLine2\nLine3" in result
 
 
+def make_doc_none_metadata(page_content: str, source: str = "test.pdf") -> MagicMock:
+    doc = MagicMock()
+    doc.page_content = page_content
+    doc.metadata = None
+    return doc
+
+
+class TestFormatContextsMalformedInput:
+    @pytest.mark.parametrize(
+        "docs,expected_exc",
+        [
+            pytest.param(None, TypeError, id="input_is_none"),
+            pytest.param(
+                [make_doc_none_metadata("bad doc")],
+                AttributeError,
+                id="doc_metadata_is_none",
+            ),
+        ],
+    )
+    def test_raises_on_malformed_input(self, docs, expected_exc):
+        with pytest.raises(expected_exc):
+            format_contexts(docs)
+
+
 class TestEmbeddingModelPath:
     def test_default_path(self):
         path = _get_embedding_model_path()
