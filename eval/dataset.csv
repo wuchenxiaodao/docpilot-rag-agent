@@ -1,0 +1,11 @@
+id,question,reference_answer,source,evidence,type,difficulty
+Q2,How many days per week may employees work remotely?,"Employees may work remotely up to three days per week, with approval from their manager.",data/AcmeTech_Employee_Handbook.pdf,"Employees may work remotely up to three days per week, with approval from their manager.",fact,easy
+Q1,What are AcmeTech's mission and values?,"AcmeTech's mission is to develop cutting-edge software solutions that help businesses streamline their operations, guided by five core values: Innovation, Integrity, Customer Focus, Teamwork, and Excellence.",data/AcmeTech_Employee_Handbook.pdf,"Our mission at AcmeTech is to develop cutting-edge software solutions that help businesses streamline their operations and achieve new heights. We are committed to: Innovation, Integrity, Customer Focus, Teamwork, Excellence.",fact,easy
+Q3,What are AcmeTech's core working hours?,AcmeTech's core working hours are 10:00 AM to 3:00 PM.,data/AcmeTech_Employee_Handbook.pdf,"Employees are expected to maintain communication, meet deadlines, and be available during core hours (10:00 AM to 3:00 PM).",fact,easy
+Q4,How many weeks of paid parental leave are provided?,AcmeTech provides 12 weeks of paid parental leave following the birth or adoption of a child.,data/AcmeTech_Employee_Handbook.pdf,Parental Leave: 12 weeks paid leave following the birth or adoption of a child.,fact,easy
+Q5,What should employees do about suspicious emails?,Employees should report any suspicious emails or activity to IT immediately.,data/AcmeTech_Employee_Handbook.pdf,Report any suspicious emails or activity to IT immediately.,fact,easy
+Q6,What is AcmeTech's stock ticker?,"The employee handbook does not contain this information, so no answer can be provided.",,,no_answer,easy
+Q7,Who is AcmeTech's CEO?,"The employee handbook does not contain this information, so no answer can be provided.",,,no_answer,easy
+Q8,In what year was AcmeTech founded?,"The employee handbook does not contain this information, so no answer can be provided.",,,no_answer,easy
+Q9,Where is AcmeTech's headquarters?,"The employee handbook does not contain this information, so no answer can be provided.",,,no_answer,easy
+Q10,What was AcmeTech's revenue last year?,"The employee handbook does not contain this information, so no answer can be provided.",,,no_answer,easy
