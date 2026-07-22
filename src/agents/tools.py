@@ -45,11 +45,32 @@ calculator.name = "Calculator"
 
 # Format retrieved documents
 def format_contexts(docs):
+    if docs is None:
+        raise TypeError("docs cannot be None")
+
     parts = []
+    seen_citations = []  # list of (filename, page) for order-preserving dedup
+    citation_lines = []  # formatted citation strings in order
+
     for i, doc in enumerate(docs, start=1):
         source = doc.metadata.get("source", "Unknown")
         parts.append(f"Document {i}\nSource: {source}\nContent: {doc.page_content}")
-    return "\n\n".join(parts)
+
+        # Extract citation from real metadata only.
+        src = doc.metadata.get("source", "")
+        page = doc.metadata.get("page")
+        if src and page is not None:
+            filename = os.path.basename(src)
+            pair = (filename, page)
+            # Order-preserving dedup: no set().
+            if pair not in seen_citations:
+                seen_citations.append(pair)
+                citation_lines.append(f"[{filename}，第 {page} 页]")
+
+    result = "\n\n".join(parts)
+    if citation_lines:
+        result += "\n\n**References:**\n" + "\n".join(citation_lines)
+    return result
 
 
 def _get_embedding_model_path() -> str:
@@ -66,7 +87,7 @@ def _get_embedding_model_path() -> str:
 
 
 def _get_chroma_db_path() -> str:
-    return os.environ.get("CHROMA_DB_PATH", "./chroma_db_qwen3_test")
+    return os.environ.get("CHROMA_DB_PATH", "./chroma_db_qwen3_semantic_chunks")
 
 
 def load_chroma_db():

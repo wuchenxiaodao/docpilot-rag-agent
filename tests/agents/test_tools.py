@@ -107,6 +107,129 @@ class TestFormatContextsMalformedInput:
             format_contexts(docs)
 
 
+def make_doc_with_metadata(
+    page_content: str,
+    source: str = "test.pdf",
+    page: int = 1,
+    title: str = "AcmeTech Employee Handbook",
+    section: str = "General",
+    pages: str = "1",
+    chunk_id: str = "test-p1-c1",
+) -> MagicMock:
+    doc = MagicMock()
+    doc.page_content = page_content
+    doc.metadata = {
+        "source": source,
+        "title": title,
+        "section": section,
+        "page": page,
+        "pages": pages,
+        "chunk_id": chunk_id,
+    }
+    return doc
+
+
+class TestFormatContextsCitations:
+    def test_citations_from_metadata(self):
+        docs = [
+            make_doc_with_metadata(
+                "Mission content", source="handbook.pdf", page=1
+            ),
+            make_doc_with_metadata(
+                "Remote work policy", source="handbook.pdf", page=3
+            ),
+        ]
+        result = format_contexts(docs)
+        assert "[handbook.pdf，第 1 页]" in result
+        assert "[handbook.pdf，第 3 页]" in result
+        assert "**References:**" in result
+
+    def test_citations_dedup_preserves_order(self):
+        docs = [
+            make_doc_with_metadata(
+                "Mission content", source="handbook.pdf", page=1
+            ),
+            make_doc_with_metadata(
+                "More mission", source="handbook.pdf", page=1
+            ),
+            make_doc_with_metadata(
+                "Remote work policy", source="handbook.pdf", page=3
+            ),
+            make_doc_with_metadata(
+                "More remote work", source="handbook.pdf", page=3
+            ),
+        ]
+        result = format_contexts(docs)
+        refs = result.split("**References:**\n")[1] if "**References:**" in result else ""
+        lines = [l for l in refs.split("\n") if l.strip()]
+        # Deduped to 2 entries, first occurrence order: page 1 then page 3
+        assert len(lines) == 2
+        assert lines[0] == "[handbook.pdf，第 1 页]"
+        assert lines[1] == "[handbook.pdf，第 3 页]"
+
+    def test_citations_multiple_sources(self):
+        docs = [
+            make_doc_with_metadata(
+                "Mission", source="handbook.pdf", page=1
+            ),
+            make_doc_with_metadata(
+                "Code of conduct", source="handbook.pdf", page=5
+            ),
+            make_doc_with_metadata(
+                "Benefits", source="policy.pdf", page=10
+            ),
+        ]
+        result = format_contexts(docs)
+        assert "[handbook.pdf，第 1 页]" in result
+        assert "[handbook.pdf，第 5 页]" in result
+        assert "[policy.pdf，第 10 页]" in result
+
+    def test_citations_missing_page_skipped(self):
+        doc = MagicMock()
+        doc.page_content = "No page metadata"
+        doc.metadata = {"source": "handbook.pdf"}
+        result = format_contexts([doc])
+        # No citations should be added
+        assert "**References:**" not in result
+        assert "Source: handbook.pdf" in result
+
+    def test_citations_missing_source_skipped(self):
+        doc = MagicMock()
+        doc.page_content = "No source metadata"
+        doc.metadata = {"page": 1}
+        result = format_contexts([doc])
+        # Source is Unknown in display, but no citation since src is empty
+        assert "**References:**" not in result
+        assert "Source: Unknown" in result
+
+    def test_citations_empty_document_list(self):
+        result = format_contexts([])
+        assert result == ""
+
+    def test_citations_no_duplicates_across_same_source_and_page(self):
+        docs = [
+            make_doc_with_metadata(
+                "First chunk", source="report.pdf", page=2
+            ),
+            make_doc_with_metadata(
+                "Second chunk same page", source="report.pdf", page=2
+            ),
+            make_doc_with_metadata(
+                "Third chunk different page", source="report.pdf", page=5
+            ),
+            make_doc_with_metadata(
+                "Fourth chunk same page again", source="report.pdf", page=2
+            ),
+        ]
+        result = format_contexts(docs)
+        refs = result.split("**References:**\n")[1] if "**References:**" in result else ""
+        lines = [l for l in refs.split("\n") if l.strip()]
+        # Only 2 unique (report.pdf, 2) and (report.pdf, 5)
+        assert len(lines) == 2
+        assert lines[0] == "[report.pdf，第 2 页]"
+        assert lines[1] == "[report.pdf，第 5 页]"
+
+
 class TestEmbeddingModelPath:
     def test_default_path(self):
         path = _get_embedding_model_path()
@@ -130,7 +253,7 @@ class TestEmbeddingModelPath:
 class TestChromaDbPath:
     def test_default_path(self):
         path = _get_chroma_db_path()
-        assert path == "./chroma_db_qwen3_test"
+        assert path == "./chroma_db_qwen3_semantic_chunks"
 
     def test_env_var_override(self):
         with patch.dict(os.environ, {"CHROMA_DB_PATH": "/custom/db"}):

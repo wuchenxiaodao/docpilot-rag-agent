@@ -1,6 +1,8 @@
-"""语义章节切分器 — 纯函数，不依赖 GPU、Embedding 或 Chroma。"""
+"""Semantic section chunker -- pure functions, no GPU / Embedding / Chroma deps."""
 
-# AcmeTech Employee Handbook 的预定义章节标题（按 PDF 出现顺序）
+import os
+
+# AcmeTech Employee Handbook section titles, in PDF order.
 SECTION_TITLES = [
     "Welcome Message",
     "Company Mission & Values",
@@ -13,27 +15,46 @@ SECTION_TITLES = [
     "Contact & Support",
 ]
 
-# 文档标题，不生成独立 Chunk
+# Document title. Not emitted as its own chunk.
 DOCUMENT_TITLE = "AcmeTech Employee Handbook"
 
-
 def _classify_line(stripped: str, section_titles: list[str]) -> str | None:
-    """判断一行是否为已知章节标题，是则返回标题，否则返回 None。"""
+    """Return the title if the line is a known section title, else None."""
     if stripped in section_titles:
         return stripped
     return None
 
+def _doc_slug(source: str) -> str:
+    """Filename without extension, used as the chunk_id prefix."""
+    base = os.path.basename(source)
+    stem, _ = os.path.splitext(base)
+    return stem or "doc"
+
+def _build_chunk(content: str, source: str, section: str, pages_set: set[int], index: int) -> dict:
+    """Build one chunk dict with full citation metadata. index is 0-based."""
+    sorted_pages = sorted(pages_set)
+    first_page = sorted_pages[0] if sorted_pages else 0
+    slug = _doc_slug(source)
+    return {
+        "page_content": content,
+        "metadata": {
+            "source": source,
+            "title": DOCUMENT_TITLE,
+            "section": section,
+            "page": first_page,
+            "pages": ",".join(str(p) for p in sorted_pages),
+            "chunk_id": f"{slug}-p{first_page}-c{index + 1}",
+        },
+    }
 
 def split_by_sections(pages: list[tuple[str, int, str]]) -> list[dict]:
-    """按章节标题切分页面文本。
+    """Split page text into chunks by section title.
 
     Args:
-        pages: 元素为 (page_text, page_number_1based, source) 的列表。
-
+        pages: list of (page_text, page_number_1based, source).
     Returns:
-        list[dict]，每个 dict 包含：
-            - page_content: str
-            - metadata: dict 含 source / section / pages
+        list of dicts, each with page_content and metadata
+        (source / title / section / page / pages / chunk_id).
     """
     section_titles = SECTION_TITLES
     skip_titles = {DOCUMENT_TITLE}
@@ -42,57 +63,58 @@ def split_by_sections(pages: list[tuple[str, int, str]]) -> list[dict]:
     current_section: str | None = None
     current_lines: list[str] = []
     current_pages: set[int] = set()
+    current_source: str = ""
     found_any_title = False
 
     for page_text, page_num, source in pages:
         lines = page_text.split("\n")
-
         for line in lines:
             stripped = line.strip()
-
             title = _classify_line(stripped, section_titles)
             if title is not None:
                 found_any_title = True
-
-                # 结束上一章节
+                # Close the previous section.
                 if current_section is not None and current_section not in skip_titles:
                     content = "\n".join(current_lines).strip()
                     if content:
-                        chunks.append({
-                            "page_content": content,
-                            "metadata": {
-                                "source": source,
-                                "section": current_section,
-                                "pages": ",".join(sorted(str(p) for p in current_pages)),
-                            },
-                        })
-
-                # 开始新章节
+                        chunks.append(
+                            _build_chunk(
+                                content,
+                                current_source,
+                                current_section,
+                                current_pages,
+                                len(chunks),
+                            )
+                        )
+                # Start a new section.
                 if title in skip_titles:
                     current_section = None
                     current_lines = []
                     current_pages = set()
+                    current_source = source
                 else:
                     current_section = title
                     current_lines = [stripped]
                     current_pages = {page_num}
+                    current_source = source
             else:
                 if current_section is not None:
                     current_lines.append(stripped)
                     current_pages.add(page_num)
 
-    # 收尾最后章节
+    # Flush the final section.
     if current_section is not None and current_section not in skip_titles:
         content = "\n".join(current_lines).strip()
         if content:
-            chunks.append({
-                "page_content": content,
-                "metadata": {
-                    "source": source,
-                    "section": current_section,
-                    "pages": ",".join(sorted(str(p) for p in current_pages)),
-                },
-            })
+            chunks.append(
+                _build_chunk(
+                    content,
+                    current_source,
+                    current_section,
+                    current_pages,
+                    len(chunks),
+                )
+            )
 
     if not found_any_title:
         raise ValueError(
