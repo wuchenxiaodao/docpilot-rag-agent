@@ -251,11 +251,15 @@ class TestEmbeddingModelPath:
 
 
 class TestChromaDbPath:
-    def test_default_path(self):
-        path = _get_chroma_db_path()
-        assert path == "./chroma_db_qwen3_semantic_chunks"
+    def test_default_path(self, monkeypatch):
+        monkeypatch.delenv("CHROMA_DB_PATH", raising=False)
+        assert _get_chroma_db_path() == "./chroma_db_qwen3_semantic_chunks"
 
     def test_env_var_override(self):
         with patch.dict(os.environ, {"CHROMA_DB_PATH": "/custom/db"}):
             path = _get_chroma_db_path()
             assert path == "/custom/db"
+
+    def test_env_var_overrides_default(self, monkeypatch):
+        monkeypatch.setenv("CHROMA_DB_PATH", "/tmp/custom_db")
+        assert _get_chroma_db_path() == "/tmp/custom_db"
