@@ -2,6 +2,7 @@
 import importlib.util
 import os
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +22,9 @@ spec.loader.exec_module(tools_module)
 format_contexts = tools_module.format_contexts
 _get_embedding_model_path = tools_module._get_embedding_model_path
 _get_chroma_db_path = tools_module._get_chroma_db_path
+database_search_func = tools_module.database_search_func
+build_citations = tools_module.build_citations
+_database_search_for_tool = tools_module._database_search_for_tool
 
 
 def make_doc(page_content: str, source: str = "test.pdf") -> MagicMock:
@@ -263,3 +267,95 @@ class TestChromaDbPath:
     def test_env_var_overrides_default(self, monkeypatch):
         monkeypatch.setenv("CHROMA_DB_PATH", "/tmp/custom_db")
         assert _get_chroma_db_path() == "/tmp/custom_db"
+
+
+class _FakeRetriever:
+    """Minimal retriever stand-in: invoke() returns prebuilt docs. No model/DB."""
+
+    def __init__(self, docs):
+        self._docs = docs
+
+    def invoke(self, query):
+        return self._docs
+
+
+def make_contract_doc(page_content: str, metadata: dict) -> SimpleNamespace:
+    """Fake document with only the two attributes the contract touches."""
+    return SimpleNamespace(page_content=page_content, metadata=metadata)
+
+
+def _patch_retriever(monkeypatch, docs):
+    """Swap load_chroma_db in the tools module for a fake returning `docs`."""
+    monkeypatch.setattr(tools_module, "load_chroma_db", lambda: _FakeRetriever(docs))
+
+
+class TestDatabaseSearchContract:
+    def test_no_answer_when_no_documents(self, monkeypatch):
+        _patch_retriever(monkeypatch, [])
+        result = database_search_func("anything")
+        assert result["status"] == "no_answer"
+        assert result["citations"] == []
+        assert result["reason"] == "no_documents_retrieved"
+        assert result["context"] == ""
+
+    def test_answered_keeps_citation_metadata(self, monkeypatch):
+        docs = [
+            make_contract_doc(
+                "Mission content",
+                {"source": "data/handbook.pdf", "page": 1, "chunk_id": "handbook-p1-c2"},
+            ),
+            make_contract_doc(
+                "Remote work policy",
+                {"source": "data/handbook.pdf", "page": 3, "chunk_id": "handbook-p3-c9"},
+            ),
+        ]
+        _patch_retriever(monkeypatch, docs)
+        result = database_search_func("mission")
+        assert result["status"] == "answered"
+        assert result["reason"] is None
+        assert len(result["citations"]) == 2
+        # Order matches the retriever's order (relevance), chunk_id preserved.
+        assert result["citations"][0] == {
+            "source": "handbook.pdf",
+            "page": 1,
+            "chunk_id": "handbook-p1-c2",
+        }
+        assert result["citations"][1] == {
+            "source": "handbook.pdf",
+            "page": 3,
+            "chunk_id": "handbook-p3-c9",
+        }
+
+    def test_citations_dedup_preserves_order(self, monkeypatch):
+        dup_metadata = {
+            "source": "data/handbook.pdf",
+            "page": 1,
+            "chunk_id": "handbook-p1-c2",
+        }
+        docs = [
+            make_contract_doc("First", dup_metadata),
+            make_contract_doc(
+                "Second",
+                {"source": "data/handbook.pdf", "page": 3, "chunk_id": "handbook-p3-c9"},
+            ),
+            make_contract_doc("Third is identical to first", dict(dup_metadata)),
+        ]
+        _patch_retriever(monkeypatch, docs)
+        result = database_search_func("x")
+        # First and third are identical -> deduped; order: first, second.
+        assert len(result["citations"]) == 2
+        assert result["citations"][0]["chunk_id"] == "handbook-p1-c2"
+        assert result["citations"][1]["chunk_id"] == "handbook-p3-c9"
+
+    def test_tool_wrapper_returns_sentinel_on_no_answer(self, monkeypatch):
+        _patch_retriever(monkeypatch, [])
+        assert _database_search_for_tool("x") == "NO_RELEVANT_DOCUMENTS_FOUND"
+
+        docs = [
+            make_contract_doc(
+                "Content",
+                {"source": "data/handbook.pdf", "page": 1, "chunk_id": "handbook-p1-c1"},
+            )
+        ]
+        _patch_retriever(monkeypatch, docs)
+        assert _database_search_for_tool("x") == database_search_func("x")["context"]

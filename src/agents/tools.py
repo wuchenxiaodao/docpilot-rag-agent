@@ -1,6 +1,7 @@
 import math
 import os
 import re
+from typing import Literal, TypedDict
 
 import numexpr
 from langchain_chroma import Chroma
@@ -41,6 +42,57 @@ def calculator_func(expression: str) -> str:
 
 calculator: BaseTool = tool(calculator_func)
 calculator.name = "Calculator"
+
+
+class Citation(TypedDict):
+    """一条引用记录。source 必有，page 和 chunk_id 可能缺失。"""
+
+    source: str
+    page: int | None
+    chunk_id: str | None
+
+class SearchResult(TypedDict):
+    """知识库检索的结构化返回值。
+
+    status:    给程序判断用，只有 answered / no_answer 两个值
+    context:   给模型看的文本
+    citations: 支撑答案的证据，拒答时必须为空
+    reason:    为什么没有答案，成功时必须为 None
+    """
+
+    status: Literal["answered", "no_answer"]
+    context: str
+    citations: list[Citation]
+    reason: str | None
+
+def build_citations(docs) -> list[Citation]:
+    """从检索结果里提取结构化引用，保序去重。"""
+    citations: list[Citation] = []
+    seen: list[tuple] = []
+
+    for doc in docs:
+        src = doc.metadata.get("source", "")
+        if not src:
+            continue
+
+        filename = os.path.basename(src)
+        page = doc.metadata.get("page")
+        chunk_id = doc.metadata.get("chunk_id")
+
+        key = (filename, page, chunk_id)
+        if key in seen:
+            continue
+        seen.append(key)
+
+        citations.append(
+            {
+                "source": filename,
+                "page": page,
+                "chunk_id": chunk_id,
+            }
+        )
+
+    return citations
 
 
 # Format retrieved documents
@@ -114,19 +166,44 @@ def load_chroma_db():
     return retriever
 
 
-def database_search_func(query: str) -> str:
+def database_search_func(query: str) -> SearchResult:
+    """检索知识库，返回结构化结果。
+
+    注意：本函数不做相似度阈值判断。当前配置下 Top-1 分数无法
+    区分「有答案」和「无答案」——实测资料内最低分 0.4042 低于
+    资料外最高分 0.4685，两组分布重叠。因此这里只处理一种确定
+    情况：检索结果为空。
+    """
+    retriever = load_chroma_db()
+    documents = retriever.invoke(query)
+
+    if not documents:
+        return {
+            "status": "no_answer",
+            "context": "",
+            "citations": [],
+            "reason": "no_documents_retrieved",
+        }
+
+    return {
+        "status": "answered",
+        "context": format_contexts(documents),
+        "citations": build_citations(documents),
+        "reason": None,
+    }
+
+def _database_search_for_tool(query: str) -> str:
     """Searches the configured DocPilot PDF/DOCX knowledge base via ChromaDB.
 
     Returns relevant text fragments and source metadata from indexed documents.
+    给 LLM 用的薄包装：把结构化结果转成模型能读的文本。
     """
-    retriever = load_chroma_db()
+    result = database_search_func(query)
 
-    documents = retriever.invoke(query)
+    if result["status"] == "no_answer":
+        return "NO_RELEVANT_DOCUMENTS_FOUND"
 
-    context_str = format_contexts(documents)
+    return result["context"]
 
-    return context_str
-
-
-database_search: BaseTool = tool(database_search_func)
+database_search: BaseTool = tool(_database_search_for_tool)
 database_search.name = "Database_Search"
