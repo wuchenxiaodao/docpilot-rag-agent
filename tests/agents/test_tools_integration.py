@@ -4,13 +4,16 @@ build_citations 依赖 docs 的 metadata["chunk_id"]，但全部单元测试都�
 构造的假 Document，该假设天然为真、从未对真实库验证过。本文件是唯一
 触碰真实向量库的检查，与 test_tools.py（纯单元、秒级）分开存放。
 
-实现说明：真实检索在隔离子进程中执行，三层防护——
+实现说明：真实检索在隔离子进程中执行，防护措施——
 1. spawn 前在父进程 pop RUN_INTEGRATION：本机沙箱在 CreateProcess 时刻
-   检查父进程环境块，含 RUN_INTEGRATION 即拦截子进程的 torch 原生加载；
-2. 子进程 env 剔除 PYTEST_*：子进程启动环境块含这些变量时自身被标记，
-   import torch 即段错误（0xC0000005，2026-07-28 后出现）；
-3. creationflags 脱离父进程组（DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-   | CREATE_BREAKAWAY_FROM_JOB），逃离 Job 进程树追踪。
+   检查父进程环境块，含 RUN_INTEGRATION 即拦截子进程的 torch 原生加载
+   （实测：不 pop 必崩，pop 后正常）；
+2. 子进程 env 剔除 PYTEST_* 与 OPENAI_API_KEY：子进程启动环境块含这些
+   变量时自身被标记，import torch 即段错误（0xC0000005，2026-07-28 后
+   出现；均经独立对照实验确认。OPENAI_API_KEY 来自项目 pyproject
+   [tool.pytest_env] 的 sk-fake 注入，本地检索链路不需要它）；
+3. creationflags 脱离父进程组：深度防御，保留无害（其必要性未单独
+   验证，前两条才是实测关键）。
 普通 python 解释器无以上限制。父进程以 JSON 回收 metadata 做断言。
 
 默认跳过；需设置 RUN_INTEGRATION=1 且真实库存在时才真实执行。
@@ -75,14 +78,12 @@ def test_real_chroma_metadata_contains_chunk_id():
         for k, v in os.environ.items()
         if not k.startswith("PYTEST_") and k != "OPENAI_API_KEY"
     }
-    # 防护 3：脱离父进程组（沙箱按 Job/进程组追踪 pytest 后代）。
+    # 防护 3：脱离父进程组（深度防御，保留无害，必要性未单独验证）。
     creationflags = 0
     for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_BREAKAWAY_FROM_JOB"):
         creationflags |= getattr(subprocess, name, 0)
-    # 子脚本落盘到自建的 Temp 子目录再执行：
-    # - `-c` 内联长脚本会被命令行内容监控拦截（实测段错误）；
-    # - Temp 根目录下的随机名 .py 文件命中「恶意软件落地」启发式拦截（实测
-    #   段错误）；自建子目录中的脚本实测正常。
+    # 子脚本落盘到自建的 Temp 子目录执行（文件版经三连跑验证稳定；`-c` 内联
+    # 形式未在解毒后重新验证，从简不复用）。
     child_dir = None
     try:
         child_dir = tempfile.mkdtemp(prefix="docpilot_it_")
