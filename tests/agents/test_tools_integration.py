@@ -4,17 +4,13 @@ build_citations 依赖 docs 的 metadata["chunk_id"]，但全部单元测试都�
 构造的假 Document，该假设天然为真、从未对真实库验证过。本文件是唯一
 触碰真实向量库的检查，与 test_tools.py（纯单元、秒级）分开存放。
 
-实现说明：真实检索在隔离子进程中执行，防护措施——
-1. spawn 前在父进程 pop RUN_INTEGRATION：本机沙箱在 CreateProcess 时刻
-   检查父进程环境块，含 RUN_INTEGRATION 即拦截子进程的 torch 原生加载
-   （实测：不 pop 必崩，pop 后正常）；
-2. 子进程 env 剔除 PYTEST_* 与 OPENAI_API_KEY：子进程启动环境块含这些
-   变量时自身被标记，import torch 即段错误（0xC0000005，2026-07-28 后
-   出现；均经独立对照实验确认。OPENAI_API_KEY 来自项目 pyproject
-   [tool.pytest_env] 的 sk-fake 注入，本地检索链路不需要它）；
-3. creationflags 脱离父进程组：深度防御，保留无害（其必要性未单独
-   验证，前两条才是实测关键）。
-普通 python 解释器无以上限制。父进程以 JSON 回收 metadata 做断言。
+实现说明：真实检索在独立子进程中执行，父进程以 JSON 回收 metadata 做
+断言。子进程架构仅为隔离与超时控制，无其他环境对策——2026-07-30 经
+五轮单变量减法实测（PowerShell）：父进程 pop RUN_INTEGRATION、子进程
+剔除 PYTEST_*、剔除 OPENAI_API_KEY、脱离进程组、脚本落盘 Temp 子目录，
+逐一去掉后本测试均仍通过，故全部删除。早前曾观察到 pytest 进程内
+import torch 触发 access violation (0xC0000005) 的现象；该现象在本机
+PowerShell 环境不可复现，机制未定位到单一变量，勿据此推断原因。
 
 默认跳过；需设置 RUN_INTEGRATION=1 且真实库存在时才真实执行。
 """
@@ -23,7 +19,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 
 import pytest
 
@@ -67,42 +62,12 @@ pytestmark = pytest.mark.skipif(
 
 def test_real_chroma_metadata_contains_chunk_id():
     """锚定假设：真实库每个片段的 metadata 都带非空 chunk_id 和 source。"""
-    # 防护 1：父进程环境块在 CreateProcess 时刻不得含 RUN_INTEGRATION。
-    os.environ.pop("RUN_INTEGRATION", None)
-    # 防护 2：子进程启动环境块剔除实测的毒源变量（存在即段错误）：
-    # - PYTEST_* 前缀（PYTEST_VERSION / PYTEST_CURRENT_TEST）
-    # - OPENAI_API_KEY（项目 pyproject [tool.pytest_env] 注入的 sk-fake key；
-    #   真实检索走本地嵌入模型与本地 Chroma，不需要任何 API key）
-    child_env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith("PYTEST_") and k != "OPENAI_API_KEY"
-    }
-    # 防护 3：脱离父进程组（深度防御，保留无害，必要性未单独验证）。
-    creationflags = 0
-    for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_BREAKAWAY_FROM_JOB"):
-        creationflags |= getattr(subprocess, name, 0)
-    # 子脚本落盘到自建的 Temp 子目录执行（文件版经三连跑验证稳定；`-c` 内联
-    # 形式未在解毒后重新验证，从简不复用）。
-    child_dir = None
-    try:
-        child_dir = tempfile.mkdtemp(prefix="docpilot_it_")
-        child_path = os.path.join(child_dir, "child_retrieve.py")
-        with open(child_path, "w", encoding="utf-8") as f:
-            f.write(_CHILD_SCRIPT)
-        proc = subprocess.run(
-            [sys.executable, child_path],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            env=child_env,
-            creationflags=creationflags,
-        )
-    finally:
-        if child_dir and os.path.isdir(child_dir):
-            for name in os.listdir(child_dir):
-                os.unlink(os.path.join(child_dir, name))
-            os.rmdir(child_dir)
+    proc = subprocess.run(
+        [sys.executable, "-c", _CHILD_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
     assert proc.returncode == 0, f"子进程真实检索失败:\n{proc.stderr}"
 
     marker = "METADATA_JSON:"
