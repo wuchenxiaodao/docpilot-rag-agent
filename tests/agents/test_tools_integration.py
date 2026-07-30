@@ -13,22 +13,28 @@ import sys
 
 import pytest
 
-# 与 tests/agents/test_tools.py 相同的加载方式：直接从文件路径加载 tools.py，
-# 绕开 src/agents/__init__.py（会触发 ollama 导入链）。
-_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, _src_dir)
-
-spec = importlib.util.spec_from_file_location(
-    "tools_module_integration",
-    os.path.join(_src_dir, "agents", "tools.py"),
-)
-tools_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(tools_module)
-
-# 真实定义位置：src/agents/tools.py:145（已 grep 确认）
-load_chroma_db = tools_module.load_chroma_db
-
 REAL_DB_PATH = "./chroma_db_qwen3_semantic_chunks"
+
+
+def _load_tools_module():
+    """从文件路径加载 src/agents/tools.py（与 test_tools.py 同款，绕开
+    src/agents/__init__.py 的 ollama 导入链）。
+
+    重量级：exec_module 会连带拉起 langchain / torch / chromadb。
+    定义在顶层不等于执行——调用必须只发生在测试函数体内，
+    否则 pytest collection 期就会付这笔导入成本，默认 skip 路径
+    会从 0.03s 退化到秒级以上。
+    """
+    _src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+    sys.path.insert(0, _src_dir)
+
+    spec = importlib.util.spec_from_file_location(
+        "tools_module_integration",
+        os.path.join(_src_dir, "agents", "tools.py"),
+    )
+    tools_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tools_module)
+    return tools_module
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_INTEGRATION") != "1"
@@ -39,6 +45,8 @@ pytestmark = pytest.mark.skipif(
 
 def test_real_chroma_metadata_contains_chunk_id():
     """锚定假设：真实库每个片段的 metadata 都带非空 chunk_id 和 source。"""
+    # 真实定义位置：src/agents/tools.py（load_chroma_db，已 grep 确认）
+    load_chroma_db = _load_tools_module().load_chroma_db
     retriever = load_chroma_db()
     documents = retriever.invoke("DocPilot 的部署方式")
 
