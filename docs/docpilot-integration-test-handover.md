@@ -28,7 +28,7 @@ Remove-Item Env:\RUN_INTEGRATION   # 跑完务必清理，避免污染环境
 
 `tests/agents/test_tools.py::TestEmbeddingModelPath::test_env_var_override` 在部分宿主环境中失败，报错：
 
-```
+```text
 ValueError: the environment variable is longer than 32767 characters
 ```
 

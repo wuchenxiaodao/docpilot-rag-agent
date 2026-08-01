@@ -1,4 +1,5 @@
 """语义章节切分器单元测试 — 不依赖 GPU / Embedding / Chroma / API Key。"""
+
 import pytest
 
 from experiments.semantic_chunker import (
@@ -50,6 +51,7 @@ def make_pages(*page_specs: tuple[str, int, str]) -> list[tuple[str, int, str]]:
 
 # ── _classify_line ────────────────────────────────────────────────────────────
 
+
 class TestClassifyLine:
     def test_known_title(self):
         assert _classify_line("Remote Work Policy", SECTION_TITLES) == "Remote Work Policy"
@@ -68,6 +70,7 @@ class TestClassifyLine:
 
 
 # ── split_by_sections ────────────────────────────────────────────────────────
+
 
 class TestSplitBySections:
     def test_expected_section_count(self):
@@ -150,7 +153,9 @@ class TestSplitBySections:
         )
         chunks = split_by_sections(pages)
         for chunk in chunks:
-            assert chunk["page_content"].strip(), f"Empty chunk for section {chunk['metadata']['section']}"
+            assert chunk["page_content"].strip(), (
+                f"Empty chunk for section {chunk['metadata']['section']}"
+            )
 
     def test_no_known_titles_raises_error(self):
         pages = make_pages(

@@ -23,8 +23,6 @@ Difference from the AcmeTech chunker, deliberate:
   level 3 for this file.
 """
 
-import os
-
 from experiments.semantic_chunker import _doc_slug
 
 # Explicit per-document section config.
@@ -141,7 +139,9 @@ MARKDOWN_SECTION_CONFIG: dict[str, dict] = {
 }
 
 
-def _build_markdown_chunk(content: str, source: str, doc_title: str, section: str, index: int) -> dict:
+def _build_markdown_chunk(
+    content: str, source: str, doc_title: str, section: str, index: int
+) -> dict:
     """Build one chunk dict with citation metadata. index is 0-based.
 
     page/pages are always 1/"1": a markdown file is a single logical page.
@@ -160,7 +160,9 @@ def _build_markdown_chunk(content: str, source: str, doc_title: str, section: st
     }
 
 
-def split_markdown_by_headings(text: str, source: str, config: dict, dropped_out: list | None = None) -> list[dict]:
+def split_markdown_by_headings(
+    text: str, source: str, config: dict, dropped_out: list | None = None
+) -> list[dict]:
     """Split markdown text into chunks by explicitly configured section headings.
 
     Args:

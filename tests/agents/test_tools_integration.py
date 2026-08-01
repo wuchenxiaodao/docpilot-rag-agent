@@ -36,9 +36,9 @@ def _load_tools_module():
     spec.loader.exec_module(tools_module)
     return tools_module
 
+
 pytestmark = pytest.mark.skipif(
-    os.environ.get("RUN_INTEGRATION") != "1"
-    or not os.path.isdir(REAL_DB_PATH),
+    os.environ.get("RUN_INTEGRATION") != "1" or not os.path.isdir(REAL_DB_PATH),
     reason="集成检查：需真实 Chroma 库，且需设置 RUN_INTEGRATION=1",
 )
 

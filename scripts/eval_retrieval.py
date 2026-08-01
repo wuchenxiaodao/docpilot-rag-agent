@@ -88,15 +88,20 @@ def _join_ids(ids: list[str]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="DocPilot 离线检索评测")
-    parser.add_argument("--eval-set", default="evals/eval_set.jsonl",
-                        help="评测集 jsonl 路径（默认 evals/eval_set.jsonl）")
+    parser.add_argument(
+        "--eval-set",
+        default="evals/eval_set.jsonl",
+        help="评测集 jsonl 路径（默认 evals/eval_set.jsonl）",
+    )
     parser.add_argument("--k", type=int, default=3, help="Top-k（默认 3）")
-    parser.add_argument("--out", default=None,
-                        help="报告输出路径（默认 evals/report_<时间戳>.md）")
-    parser.add_argument("--db-path", default=None,
-                        help="Chroma 库路径（默认 None，即 tools.py 内建的 "
-                             "./chroma_db_qwen3_semantic_chunks；"
-                             "设置后通过 CHROMA_DB_PATH 环境变量生效）")
+    parser.add_argument("--out", default=None, help="报告输出路径（默认 evals/report_<时间戳>.md）")
+    parser.add_argument(
+        "--db-path",
+        default=None,
+        help="Chroma 库路径（默认 None，即 tools.py 内建的 "
+        "./chroma_db_qwen3_semantic_chunks；"
+        "设置后通过 CHROMA_DB_PATH 环境变量生效）",
+    )
     args = parser.parse_args()
 
     # --db-path 只改本进程环境变量，tools.py 的 _get_chroma_db_path 读取它。
@@ -114,11 +119,9 @@ def main() -> int:
 
     entries = load_eval_set(args.eval_set)
 
-    eligible = [e for e in entries
-                if e["type"] in METRIC_TYPES and "待标注" not in e["note"]]
+    eligible = [e for e in entries if e["type"] in METRIC_TYPES and "待标注" not in e["note"]]
     pending = [e for e in entries if "待标注" in e["note"]]
-    out_corpus = [e for e in entries
-                  if e["type"] == "out_corpus" and "待标注" not in e["note"]]
+    out_corpus = [e for e in entries if e["type"] == "out_corpus" and "待标注" not in e["note"]]
 
     tools_module = _load_tools_module()
     retriever = tools_module.load_chroma_db()
@@ -137,12 +140,18 @@ def main() -> int:
             None,
         )
         covered = [c for c in expected if c in top_ids]
-        results.append({
-            "entry": e, "top_ids": top_ids,
-            "hit_rank": hit_rank, "covered": covered,
-        })
-        print(f"[{i}/{total}] {e['id']} -> "
-              f"{'hit@' + str(hit_rank) if hit_rank else 'MISS'}", flush=True)
+        results.append(
+            {
+                "entry": e,
+                "top_ids": top_ids,
+                "hit_rank": hit_rank,
+                "covered": covered,
+            }
+        )
+        print(
+            f"[{i}/{total}] {e['id']} -> {'hit@' + str(hit_rank) if hit_rank else 'MISS'}",
+            flush=True,
+        )
 
     # ---- 真实检索：资料外观察题 ----
     observations = []
@@ -166,7 +175,8 @@ def main() -> int:
         rk = sum(1 for r in sub if r["hit_rank"] is not None)
         ms = sum(1.0 / r["hit_rank"] for r in sub if r["hit_rank"])
         fc = sum(
-            1 for r in sub
+            1
+            for r in sub
             if r["entry"]["expected_chunk_ids"]
             and len(r["covered"]) == len(r["entry"]["expected_chunk_ids"])
         )
@@ -197,8 +207,7 @@ def main() -> int:
         )
         if t == "multi_hop":
             line += (
-                f", full-coverage@{args.k} = {mt['fc']}/{mt['m']} = "
-                f"{mt['fc'] / mt['m'] * 100:.1f}%"
+                f", full-coverage@{args.k} = {mt['fc']}/{mt['m']} = {mt['fc'] / mt['m'] * 100:.1f}%"
             )
         per_type_lines.append(line)
 
@@ -212,12 +221,15 @@ def main() -> int:
         print(line)
     for line in per_type_lines:
         print(line)
-    print(f"指标分母 n={n}（in_corpus+multi_hop，已排除待标注 {len(pending)} 条、"
-          f"out_corpus {len(out_corpus)} 条）")
+    print(
+        f"指标分母 n={n}（in_corpus+multi_hop，已排除待标注 {len(pending)} 条、"
+        f"out_corpus {len(out_corpus)} 条）"
+    )
 
     # ---- 语料规模（文档数 / chunk 数，从库 metadata 实查） ----
     db_path = tools_module._get_chroma_db_path()
     import chromadb
+
     col = chromadb.PersistentClient(path=db_path).get_collection("langchain")
     all_meta = col.get(include=["metadatas"])["metadatas"]
     chunk_total = col.count()
@@ -225,14 +237,18 @@ def main() -> int:
     L = []
     L.append("# DocPilot 检索评测报告")
     L.append("")
-    L.append(f"> **边界声明**：本结果仅适用于当前评测集与当前 Chroma 库配置，"
-             f"样本量 N={len(entries)}，不构成统计显著性结论，不可跨数据集比较。")
+    L.append(
+        f"> **边界声明**：本结果仅适用于当前评测集与当前 Chroma 库配置，"
+        f"样本量 N={len(entries)}，不构成统计显著性结论，不可跨数据集比较。"
+    )
     L.append(">")
-    L.append(f"> 语料规模：{doc_total} 份文档 / {chunk_total} 个 chunk；k={args.k}。"
-             f"混合切分：AcmeTech PDF 用硬编码章节标题切分，9 份 markdown 用显式配置的"
-             f" heading 标题集切分（8 份 `##` 级、VertexAI 用 `###` 级）。"
-             f"markdown 无页码，其 chunk_id 的 `p1` 为占位符（PDF 的 `p` 是真实页码），"
-             f"会影响引用展示。")
+    L.append(
+        f"> 语料规模：{doc_total} 份文档 / {chunk_total} 个 chunk；k={args.k}。"
+        f"混合切分：AcmeTech PDF 用硬编码章节标题切分，9 份 markdown 用显式配置的"
+        f" heading 标题集切分（8 份 `##` 级、VertexAI 用 `###` 级）。"
+        f"markdown 无页码，其 chunk_id 的 `p1` 为占位符（PDF 的 `p` 是真实页码），"
+        f"会影响引用展示。"
+    )
     L.append("")
     L.append("## 运行配置")
     L.append("")
@@ -241,9 +257,11 @@ def main() -> int:
     L.append(f"- 语料: {doc_total} 份文档 / {chunk_total} 个 chunk")
     L.append(f"- Top-k: {args.k}")
     L.append(f"- 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    L.append(f"- 计入指标: {n} 条（in_corpus {len(by_type.get('in_corpus', []))} + "
-             f"multi_hop {len(by_type.get('multi_hop', []))}）；"
-             f"排除: 待标注 {len(pending)} 条、out_corpus {len(out_corpus)} 条（仅观察）")
+    L.append(
+        f"- 计入指标: {n} 条（in_corpus {len(by_type.get('in_corpus', []))} + "
+        f"multi_hop {len(by_type.get('multi_hop', []))}）；"
+        f"排除: 待标注 {len(pending)} 条、out_corpus {len(out_corpus)} 条（仅观察）"
+    )
     L.append("")
     L.append("## 指标汇总")
     L.append("")
@@ -257,7 +275,13 @@ def main() -> int:
     L.append("")
     L.append("**分 type**（不混合平均）：")
     L.append("")
-    L.append("| type | n | Recall@1 | Recall@" + str(args.k) + " | MRR | full-coverage@" + str(args.k) + " |")
+    L.append(
+        "| type | n | Recall@1 | Recall@"
+        + str(args.k)
+        + " | MRR | full-coverage@"
+        + str(args.k)
+        + " |"
+    )
     L.append("|---|---|---|---|---|---|")
     for t in METRIC_TYPES:
         sub = by_type.get(t, [])
@@ -265,17 +289,24 @@ def main() -> int:
             continue
         mt = _metrics(sub)
         m = mt["m"]
-        fc_cell = (f"{mt['fc']}/{m} = {mt['fc'] / m * 100:.1f}%"
-                   if t == "multi_hop" else "—（单期望 chunk，同 Recall@k）")
-        L.append(f"| {t} | {m} | {mt['r1']}/{m} = {mt['r1'] / m * 100:.1f}% | "
-                 f"{mt['rk']}/{m} = {mt['rk'] / m * 100:.1f}% | "
-                 f"{mt['ms']:.3f}/{m} = {mt['ms'] / m:.3f} | {fc_cell} |")
+        fc_cell = (
+            f"{mt['fc']}/{m} = {mt['fc'] / m * 100:.1f}%"
+            if t == "multi_hop"
+            else "—（单期望 chunk，同 Recall@k）"
+        )
+        L.append(
+            f"| {t} | {m} | {mt['r1']}/{m} = {mt['r1'] / m * 100:.1f}% | "
+            f"{mt['rk']}/{m} = {mt['rk'] / m * 100:.1f}% | "
+            f"{mt['ms']:.3f}/{m} = {mt['ms'] / m:.3f} | {fc_cell} |"
+        )
     L.append("")
-    L.append(f"> **口径说明**：Recall@{args.k} 对 multi_hop 的判定是「至少命中一个期望 chunk」，"
-             f"与 multi_hop「需跨两 chunk 才能作答」的定义不符，仅供对照；"
-             f"full-coverage@{args.k}（k 内全部期望 chunk 命中）才是 multi_hop 的严格口径。"
-             f"另外 k={args.k} 对 multi_hop 天然不利——双期望 chunk 需同时挤进前 {args.k} 位，"
-             f"两个 type 用同一 k 比较时必须附带此说明。")
+    L.append(
+        f"> **口径说明**：Recall@{args.k} 对 multi_hop 的判定是「至少命中一个期望 chunk」，"
+        f"与 multi_hop「需跨两 chunk 才能作答」的定义不符，仅供对照；"
+        f"full-coverage@{args.k}（k 内全部期望 chunk 命中）才是 multi_hop 的严格口径。"
+        f"另外 k={args.k} 对 multi_hop 天然不利——双期望 chunk 需同时挤进前 {args.k} 位，"
+        f"两个 type 用同一 k 比较时必须附带此说明。"
+    )
     L.append("")
     L.append("## 逐题明细")
     L.append("")
@@ -286,9 +317,11 @@ def main() -> int:
         hit = "✅" if r["hit_rank"] else "❌"
         rank = str(r["hit_rank"]) if r["hit_rank"] else "-"
         cov = f"{len(r['covered'])}/{len(e['expected_chunk_ids'])}"
-        L.append(f"| {e['id']} | {_trunc(e['question'])} | "
-                 f"{_join_ids(e['expected_chunk_ids'])} | {_join_ids(r['top_ids'])} | "
-                 f"{hit} | {rank} | {cov} |")
+        L.append(
+            f"| {e['id']} | {_trunc(e['question'])} | "
+            f"{_join_ids(e['expected_chunk_ids'])} | {_join_ids(r['top_ids'])} | "
+            f"{hit} | {rank} | {cov} |"
+        )
     L.append("")
     L.append("## 失败案例（未命中）")
     L.append("")

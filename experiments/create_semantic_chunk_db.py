@@ -3,6 +3,7 @@
 基于章节标题切分，而非 RecursiveCharacterTextSplitter。
 仅操作 ./chroma_db_qwen3_semantic_chunks，不触碰 Baseline。
 """
+
 import argparse
 import os
 import shutil
@@ -41,10 +42,7 @@ def create_semantic_chunk_db(folder_path: str, rebuild: bool = False):
             shutil.rmtree(DB_NAME)
             print(f"Rebuilding: deleted existing database at {DB_NAME}")
         else:
-            print(
-                f"Database already exists at {DB_NAME}. "
-                "Use --rebuild to delete and recreate."
-            )
+            print(f"Database already exists at {DB_NAME}. Use --rebuild to delete and recreate.")
             sys.exit(0)
 
     embeddings = HuggingFaceEmbeddings(

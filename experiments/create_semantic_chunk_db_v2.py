@@ -69,10 +69,7 @@ def create_v2_db(rebuild: bool = False) -> None:
             shutil.rmtree(DB_V2)
             print(f"Rebuilding: deleted existing database at {DB_V2}")
         else:
-            print(
-                f"Database already exists at {DB_V2}. "
-                "Use --rebuild to delete and recreate."
-            )
+            print(f"Database already exists at {DB_V2}. Use --rebuild to delete and recreate.")
             sys.exit(0)
 
     embeddings = HuggingFaceEmbeddings(
@@ -105,9 +102,9 @@ def create_v2_db(rebuild: bool = False) -> None:
         chunks = split_by_sections(pages)
 
         for chunk in chunks:
-            chroma.add_documents([
-                Document(page_content=chunk["page_content"], metadata=chunk["metadata"])
-            ])
+            chroma.add_documents(
+                [Document(page_content=chunk["page_content"], metadata=chunk["metadata"])]
+            )
         per_doc_counts[filename] = len(chunks)
         print(f"[acme-original-path] {filename}: {len(chunks)} chunks")
 
@@ -126,13 +123,15 @@ def create_v2_db(rebuild: bool = False) -> None:
             print(f"FATAL: markdown split failed: {e}")
             sys.exit(1)
         for chunk in chunks:
-            chroma.add_documents([
-                Document(page_content=chunk["page_content"], metadata=chunk["metadata"])
-            ])
+            chroma.add_documents(
+                [Document(page_content=chunk["page_content"], metadata=chunk["metadata"])]
+            )
         per_doc_counts[md_path] = len(chunks)
         dropped_by_doc[md_path] = [ln for ln in dropped if ln.strip()]
-        print(f"[markdown-explicit]    {md_path}: {len(chunks)} chunks "
-              f"(level={cfg['level']}, {len(cfg['sections'])} configured titles)")
+        print(
+            f"[markdown-explicit]    {md_path}: {len(chunks)} chunks "
+            f"(level={cfg['level']}, {len(cfg['sections'])} configured titles)"
+        )
 
     print(f"\nSemantic chunk database v2 created and saved in {DB_V2}.")
     return per_doc_counts, dropped_by_doc
@@ -145,9 +144,7 @@ def verify(per_doc_counts: dict[str, int], dropped_by_doc: dict[str, list]) -> N
     v2 = chromadb.PersistentClient(path=DB_V2).get_collection(COLLECTION)
     all_v2 = v2.get(include=["metadatas", "documents"])
     meta_by_id = {m["chunk_id"]: m for m in all_v2["metadatas"]}
-    doc_by_id = {
-        m["chunk_id"]: d for m, d in zip(all_v2["metadatas"], all_v2["documents"])
-    }
+    doc_by_id = {m["chunk_id"]: d for m, d in zip(all_v2["metadatas"], all_v2["documents"])}
 
     # 1. counts
     total = v2.count()
@@ -163,6 +160,7 @@ def verify(per_doc_counts: dict[str, int], dropped_by_doc: dict[str, list]) -> N
     print(f"  total ids={len(all_ids)}, unique={uniq}")
     if uniq != len(all_ids) or uniq != total:
         from collections import Counter
+
         dupes = [cid for cid, n in Counter(all_ids).items() if n > 1]
         print(f"  FATAL: duplicate chunk_ids detected: {dupes}")
         failures.append(f"chunk_id uniqueness violated: {uniq} unique of {len(all_ids)}")
@@ -239,9 +237,7 @@ def verify(per_doc_counts: dict[str, int], dropped_by_doc: dict[str, list]) -> N
     v2_acme = {cid: d for cid, d in doc_by_id.items() if cid.startswith(acme_prefix)}
     print(f"  v1 acme chunks: {len(v1_sha)}, v2 acme chunks: {len(v2_acme)}")
     if len(v2_acme) != len(v1_sha):
-        failures.append(
-            f"acme chunk count differs: v1={len(v1_sha)} v2={len(v2_acme)}"
-        )
+        failures.append(f"acme chunk count differs: v1={len(v1_sha)} v2={len(v2_acme)}")
     for cid in sorted(v1_sha):
         body = v2_acme.get(cid)
         if body is None:

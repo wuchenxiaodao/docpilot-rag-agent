@@ -51,6 +51,7 @@ class Citation(TypedDict):
     page: int | None
     chunk_id: str | None
 
+
 class SearchResult(TypedDict):
     """知识库检索的结构化返回值。
 
@@ -64,6 +65,7 @@ class SearchResult(TypedDict):
     context: str
     citations: list[Citation]
     reason: str | None
+
 
 def build_citations(docs) -> list[Citation]:
     """从检索结果里提取结构化引用，保序去重。"""
@@ -192,6 +194,7 @@ def database_search_func(query: str) -> SearchResult:
         "reason": None,
     }
 
+
 def _database_search_for_tool(query: str) -> str:
     """Searches the configured DocPilot PDF/DOCX knowledge base via ChromaDB.
 
@@ -204,6 +207,7 @@ def _database_search_for_tool(query: str) -> str:
         return "NO_RELEVANT_DOCUMENTS_FOUND"
 
     return result["context"]
+
 
 database_search: BaseTool = tool(_database_search_for_tool)
 database_search.name = "Database_Search"

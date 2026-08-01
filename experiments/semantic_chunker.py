@@ -18,17 +18,20 @@ SECTION_TITLES = [
 # Document title. Not emitted as its own chunk.
 DOCUMENT_TITLE = "AcmeTech Employee Handbook"
 
+
 def _classify_line(stripped: str, section_titles: list[str]) -> str | None:
     """Return the title if the line is a known section title, else None."""
     if stripped in section_titles:
         return stripped
     return None
 
+
 def _doc_slug(source: str) -> str:
     """Filename without extension, used as the chunk_id prefix."""
     base = os.path.basename(source)
     stem, _ = os.path.splitext(base)
     return stem or "doc"
+
 
 def _build_chunk(content: str, source: str, section: str, pages_set: set[int], index: int) -> dict:
     """Build one chunk dict with full citation metadata. index is 0-based."""
@@ -46,6 +49,7 @@ def _build_chunk(content: str, source: str, section: str, pages_set: set[int], i
             "chunk_id": f"{slug}-p{first_page}-c{index + 1}",
         },
     }
+
 
 def split_by_sections(pages: list[tuple[str, int, str]]) -> list[dict]:
     """Split page text into chunks by section title.
@@ -118,8 +122,7 @@ def split_by_sections(pages: list[tuple[str, int, str]]) -> list[dict]:
 
     if not found_any_title:
         raise ValueError(
-            "No known section titles found in the document. "
-            "Cannot create semantic chunks."
+            "No known section titles found in the document. Cannot create semantic chunks."
         )
 
     return chunks

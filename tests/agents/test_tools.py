@@ -1,4 +1,5 @@
 """Tests for DocPilot retrieval tools (format_contexts, path resolution)."""
+
 import importlib.util
 import os
 import sys
@@ -136,12 +137,8 @@ def make_doc_with_metadata(
 class TestFormatContextsCitations:
     def test_citations_from_metadata(self):
         docs = [
-            make_doc_with_metadata(
-                "Mission content", source="handbook.pdf", page=1
-            ),
-            make_doc_with_metadata(
-                "Remote work policy", source="handbook.pdf", page=3
-            ),
+            make_doc_with_metadata("Mission content", source="handbook.pdf", page=1),
+            make_doc_with_metadata("Remote work policy", source="handbook.pdf", page=3),
         ]
         result = format_contexts(docs)
         assert "[handbook.pdf，第 1 页]" in result
@@ -150,22 +147,14 @@ class TestFormatContextsCitations:
 
     def test_citations_dedup_preserves_order(self):
         docs = [
-            make_doc_with_metadata(
-                "Mission content", source="handbook.pdf", page=1
-            ),
-            make_doc_with_metadata(
-                "More mission", source="handbook.pdf", page=1
-            ),
-            make_doc_with_metadata(
-                "Remote work policy", source="handbook.pdf", page=3
-            ),
-            make_doc_with_metadata(
-                "More remote work", source="handbook.pdf", page=3
-            ),
+            make_doc_with_metadata("Mission content", source="handbook.pdf", page=1),
+            make_doc_with_metadata("More mission", source="handbook.pdf", page=1),
+            make_doc_with_metadata("Remote work policy", source="handbook.pdf", page=3),
+            make_doc_with_metadata("More remote work", source="handbook.pdf", page=3),
         ]
         result = format_contexts(docs)
         refs = result.split("**References:**\n")[1] if "**References:**" in result else ""
-        lines = [l for l in refs.split("\n") if l.strip()]
+        lines = [line for line in refs.split("\n") if line.strip()]
         # Deduped to 2 entries, first occurrence order: page 1 then page 3
         assert len(lines) == 2
         assert lines[0] == "[handbook.pdf，第 1 页]"
@@ -173,15 +162,9 @@ class TestFormatContextsCitations:
 
     def test_citations_multiple_sources(self):
         docs = [
-            make_doc_with_metadata(
-                "Mission", source="handbook.pdf", page=1
-            ),
-            make_doc_with_metadata(
-                "Code of conduct", source="handbook.pdf", page=5
-            ),
-            make_doc_with_metadata(
-                "Benefits", source="policy.pdf", page=10
-            ),
+            make_doc_with_metadata("Mission", source="handbook.pdf", page=1),
+            make_doc_with_metadata("Code of conduct", source="handbook.pdf", page=5),
+            make_doc_with_metadata("Benefits", source="policy.pdf", page=10),
         ]
         result = format_contexts(docs)
         assert "[handbook.pdf，第 1 页]" in result
@@ -212,22 +195,14 @@ class TestFormatContextsCitations:
 
     def test_citations_no_duplicates_across_same_source_and_page(self):
         docs = [
-            make_doc_with_metadata(
-                "First chunk", source="report.pdf", page=2
-            ),
-            make_doc_with_metadata(
-                "Second chunk same page", source="report.pdf", page=2
-            ),
-            make_doc_with_metadata(
-                "Third chunk different page", source="report.pdf", page=5
-            ),
-            make_doc_with_metadata(
-                "Fourth chunk same page again", source="report.pdf", page=2
-            ),
+            make_doc_with_metadata("First chunk", source="report.pdf", page=2),
+            make_doc_with_metadata("Second chunk same page", source="report.pdf", page=2),
+            make_doc_with_metadata("Third chunk different page", source="report.pdf", page=5),
+            make_doc_with_metadata("Fourth chunk same page again", source="report.pdf", page=2),
         ]
         result = format_contexts(docs)
         refs = result.split("**References:**\n")[1] if "**References:**" in result else ""
-        lines = [l for l in refs.split("\n") if l.strip()]
+        lines = [line for line in refs.split("\n") if line.strip()]
         # Only 2 unique (report.pdf, 2) and (report.pdf, 5)
         assert len(lines) == 2
         assert lines[0] == "[report.pdf，第 2 页]"
