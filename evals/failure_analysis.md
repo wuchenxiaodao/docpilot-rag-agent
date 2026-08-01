@@ -100,3 +100,39 @@ query 取期望 chunk 原文首句 `Work Hours & Attendance — Our regular offi
 | Q20 | 问法表达差异 | paraphrase 双版本对照轨 |
 
 三例覆盖六类中的三类，均附对照题（Q3/Q5/Q36）支撑排他性论证。
+
+---
+
+## 超长 chunk 静默截断核查（2026-08-01）
+
+### 核查结论
+
+全部 56 个 chunk 逐一用模型自带的 Qwen2Tokenizer 编码，**0/56 超过 `max_seq_length`**。
+
+- 模型：`Qwen3-Embedding-0.6B`（加载自 `~/Models/Qwen3-Embedding-0.6B`），从加载后的 `SentenceTransformer` 对象直接读取 `max_seq_length = 32768`，维度 1024。
+- 最长 chunk `Dependency_Upgrades-p1-c7` = 10904 字符 = **3330 tokens**，仅为上限的 10.2%。
+
+### 端到端验证
+
+自检索诊断：取 `Dependency_Upgrades-p1-c7` 尾部原文当 query 在 v2 库检索 Top-5，目标 chunk 排 **#2**；取开头原文当 query，排 **#1**。两组均落在 Top-5 内 → **尾部文字确实参与了向量编码，截断排除**。
+
+走的是与 `scripts/eval_retrieval.py` 同一条链路（`_load_tools_module()` → `load_chroma_db()` → `retriever.invoke()`），未自行实例化 embedding 模型。
+
+### 已知局限
+
+尾部 query 选的是一句交叉引用句（含 "see the coupling-constraints entries above"），而抢到 #1 的 `p1-c6` 正好就是 Coupling constraints 那一节。
+
+因此「排 #2」这个名次用「query 自身指向别处」就能解释完，**不构成「表征稀释」的证据**。稀释可能存在，但这组实验变量没控住，证不了。
+
+截断排除这个结论**不受影响**——只要目标落在 Top-5 内，就证明尾部文字在向量里。
+
+### Baseline 定稿声明
+
+以下数字已通过静默截断可信度核查，可引用（全部带分子/分母）：
+
+| 指标 | 值 | 样本 |
+|---|---|---|
+| Recall@1 | 32/35 = 91.4% | 50 题评测集 |
+| Recall@3 | 34/35 = 97.1% | 同上 |
+| MRR | 32.833/35 = 0.938 | 同上 |
+| full-coverage@3 | 7/10 = 70.0% | multi_hop 子集 |
