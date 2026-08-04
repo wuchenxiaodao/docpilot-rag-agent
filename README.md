@@ -1,257 +1,619 @@
-# 📄 DocPilot — Grounded RAG Agent for PDF/DOCX Documents
+# 📄 DocPilot — Evaluable Document RAG Agent
 
-_A fork of [agent-service-toolkit](https://github.com/JoshuaC215/agent-service-toolkit) by JoshuaC215, adapted into a document-grounded RAG evaluation showcase._
+[![Tests](https://github.com/wuchenxiaodao/docpilot-rag-agent/actions/workflows/test.yml/badge.svg)](https://github.com/wuchenxiaodao/docpilot-rag-agent/actions/workflows/test.yml)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Service-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Agent-1C3C3C)](https://langchain-ai.github.io/langgraph/)
+[![License](https://img.shields.io/github/license/wuchenxiaodao/docpilot-rag-agent)](./LICENSE)
 
-[![build status](https://github.com/JoshuaC215/agent-service-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/JoshuaC215/agent-service-toolkit/actions/workflows/test.yml) [![codecov](https://codecov.io/github/JoshuaC215/agent-service-toolkit/graph/badge.svg?token=5MTJSYWD05)](https://codecov.io/github/JoshuaC215/agent-service-toolkit) [![Python Version](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2FJoshuaC215%2Fagent-service-toolkit%2Frefs%2Fheads%2Fmain%2Fpyproject.toml)](https://github.com/JoshuaC215/agent-service-toolkit/blob/main/pyproject.toml)
-[![GitHub License](https://img.shields.io/github/license/JoshuaC215/agent-service-toolkit)](https://github.com/JoshuaC215/agent-service-toolkit/blob/main/LICENSE) [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_red.svg)](https://agent-service-toolkit.streamlit.app/)
+DocPilot is a document-grounded RAG agent built for **measurable retrieval quality, traceable answers, and production-oriented streaming**.
 
-A full toolkit for running an AI agent service built with LangGraph, FastAPI and Streamlit.
+Instead of treating RAG as a black-box demo, DocPilot includes a frozen evaluation set, semantic chunking experiments, retrieval diagnostics, source-grounded responses, and an end-to-end FastAPI + Streamlit application.
 
-It includes a [LangGraph](https://langchain-ai.github.io/langgraph/) agent, a [FastAPI](https://fastapi.tiangolo.com/) service to serve it, a client to interact with the service, and a [Streamlit](https://streamlit.io/) app that uses the client to provide a chat interface. Data structures and settings are built with [Pydantic](https://github.com/pydantic/pydantic).
+> This repository is adapted from [JoshuaC215/agent-service-toolkit](https://github.com/JoshuaC215/agent-service-toolkit). The service framework originates from the upstream project; the document RAG pipeline, retrieval evaluation, semantic chunking experiments, and DocPilot-specific reliability work are the focus of this fork.
 
-This project offers a template for you to easily build and run your own agents using the LangGraph framework. It demonstrates a complete setup from agent definition to user interface, making it easier to get started with LangGraph-based projects by providing a full, robust toolkit.
+---
 
-**[🎥 Watch a video walkthrough of the repo and app](https://www.youtube.com/watch?v=pdYVHw_YCNY)**
+## Why DocPilot?
 
-## Overview
+A RAG system can produce fluent answers even when retrieval is wrong.
 
-### [Try the app!](https://agent-service-toolkit.streamlit.app/)
+DocPilot therefore evaluates retrieval independently from generation and makes the following questions observable:
 
-<a href="https://agent-service-toolkit.streamlit.app/"><img src="media/app_screenshot.png" width="600" alt="App screenshot"></a>
+- Was the correct evidence retrieved?
+- At which rank did the correct evidence appear?
+- Can all evidence required by a multi-hop question be retrieved together?
+- Does the final answer stay within the retrieved documents?
+- Can the response expose its sources?
+- What happens when retrieval, generation, or streaming fails?
 
-### Quickstart
+The goal is not only to build a document chatbot, but to build a RAG system whose behavior can be **measured, diagnosed, and improved**.
 
-Run directly in python
+---
 
-```sh
-# At least one LLM API key is required
-echo 'OPENAI_API_KEY=your_openai_api_key' >> .env
+## Current Retrieval Results
 
-# uv is the recommended way to install agent-service-toolkit, but "pip install ." also works
-# For uv installation options, see: https://docs.astral.sh/uv/getting-started/installation/
-curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+The current frozen evaluation set contains **50 questions**:
 
-# Install dependencies. "uv sync" creates .venv automatically
+- **35 answerable questions** with labeled supporting evidence
+- **15 unanswerable / out-of-domain questions**
+- **10 multi-hop questions** requiring more than one evidence chunk
+
+### Retrieval metrics
+
+| Metric | Result |
+|---|---:|
+| Recall@1 | **32/35 (91.4%)** |
+| Recall@3 | **34/35 (97.1%)** |
+| MRR | **0.938** |
+| Multi-hop full-coverage@3 | **7/10 (70.0%)** |
+
+### Metric definitions
+
+- **Recall@1**: percentage of answerable questions whose labeled evidence is ranked first.
+- **Recall@3**: percentage of answerable questions whose labeled evidence appears in the top three results.
+- **MRR**: Mean Reciprocal Rank of the first correct evidence chunk.
+- **Multi-hop full-coverage@3**: percentage of multi-hop questions for which all required evidence chunks appear in the top three results.
+
+### Why is the Recall denominator 35 instead of 50?
+
+Recall is calculated over the **35 answerable questions** because those questions have labeled supporting evidence that retrieval is expected to find.
+
+The remaining 15 questions are intentionally unanswerable or out of domain. They are used to evaluate rejection and grounding behavior rather than evidence recall.
+
+This separation prevents an unanswerable question from being incorrectly counted as a retrieval miss when no valid evidence exists in the corpus.
+
+> Evaluation results are tied to the frozen corpus, question set, chunking strategy, embedding configuration, and `top-k` settings. They should not be interpreted as universal benchmark results.
+
+---
+
+## Key Features
+
+### Document-grounded answers
+
+DocPilot retrieves relevant document chunks before generation and instructs the model to answer primarily from the retrieved evidence.
+
+If the available evidence is insufficient, the agent should explicitly say so instead of inventing an answer.
+
+### Traceable sources
+
+Retrieved chunks retain source metadata so the final response can identify the documents used to produce an answer.
+
+### Semantic chunking
+
+The project includes experiments for replacing coarse page-level chunks with smaller, semantically coherent chunks.
+
+This reduces embedding dilution when one page contains several unrelated sections.
+
+### Frozen retrieval evaluation
+
+A fixed question set and labeled evidence set make retrieval changes comparable across experiments.
+
+The evaluation reports:
+
+- Recall@1
+- Recall@3
+- MRR
+- Per-question ranks
+- Retrieval misses
+- Multi-hop evidence coverage
+- Out-of-domain behavior
+
+### Retrieval diagnostics
+
+Diagnostic scripts expose retrieved chunks, ranks, scores, and failure cases instead of reporting only an aggregate metric.
+
+This makes it possible to distinguish between:
+
+- chunking failures;
+- embedding failures;
+- query-encoding failures;
+- `top-k` limitations;
+- multi-hop coverage failures;
+- generation failures.
+
+### Streaming API
+
+The service supports streamed responses through FastAPI and an asynchronous client.
+
+The main streaming path is:
+
+```text
+Streamlit UI
+    → AgentClient.astream()
+    → FastAPI
+    → LangGraph agent
+    → retrieval and model generation
+    → StreamingResponse / SSE
+    → AgentClient
+    → Streamlit UI
+```
+
+The client consumes the response incrementally and uses an explicit completion signal to identify the end of a stream.
+
+### Unified service architecture
+
+DocPilot retains the reusable service foundation of `agent-service-toolkit`:
+
+- LangGraph agent orchestration
+- FastAPI service layer
+- asynchronous Python client
+- Streamlit interface
+- Pydantic request and response models
+- streaming and non-streaming endpoints
+- Docker-based local environment
+- automated tests
+
+---
+
+## System Architecture
+
+![DocPilot architecture](./media/agent_architecture.png)
+
+```mermaid
+flowchart LR
+    U[User] --> UI[Streamlit UI]
+    UI --> C[AgentClient]
+    C --> API[FastAPI Service]
+    API --> R[Agent Registry]
+    R --> A[LangGraph Agent]
+
+    A --> RET[Retriever]
+    RET --> VDB[Chroma Vector Store]
+    VDB --> RET
+    RET --> A
+
+    A --> LLM[Language Model]
+    LLM --> A
+
+    A --> API
+    API --> C
+    C --> UI
+```
+
+### Request lifecycle
+
+1. The user submits a document-related question in the Streamlit interface.
+2. `AgentClient` serializes the request and sends it to the FastAPI service.
+3. FastAPI validates the request with Pydantic.
+4. The agent registry selects the configured LangGraph agent.
+5. The retriever searches the vector store for relevant chunks.
+6. Retrieved content and source metadata are added to the model context.
+7. The model generates a grounded answer.
+8. The service returns either a complete response or a streamed response.
+9. The client parses the response and renders it in the UI.
+
+---
+
+## RAG Pipeline
+
+```text
+PDF / DOCX documents
+        ↓
+Text extraction
+        ↓
+Semantic chunking
+        ↓
+Embedding generation
+        ↓
+Chroma vector store
+        ↓
+Top-k retrieval
+        ↓
+Retrieved evidence + metadata
+        ↓
+LangGraph agent
+        ↓
+Grounded answer with sources
+```
+
+### Retrieval improvement process
+
+DocPilot follows an experiment-first workflow:
+
+1. Freeze the corpus and evaluation questions.
+2. Run the current retrieval configuration as a baseline.
+3. Inspect per-question retrieval results.
+4. Identify the dominant failure mode.
+5. Change one retrieval variable at a time.
+6. Rebuild the vector store when chunk boundaries change.
+7. Re-run the same frozen evaluation set.
+8. Compare metrics and regression cases.
+9. Promote a change only when the evidence supports it.
+
+This avoids tuning the system based on a few hand-picked examples.
+
+---
+
+## Chunking: The Main Retrieval Bottleneck
+
+Early experiments used page-level chunks. A single page could contain several topics, such as:
+
+- company mission and values;
+- working hours;
+- remote-work policy;
+- security guidance;
+- leave policy.
+
+Embedding the entire page into one vector diluted the representation of each individual topic. Shorter, keyword-dense chunks could then outrank the correct page even for unrelated questions.
+
+DocPilot addresses this with semantic chunking:
+
+- split documents around section and meaning boundaries;
+- keep related sentences together;
+- avoid combining unrelated policies in one vector;
+- preserve source and section metadata;
+- verify chunk boundaries through retrieval evaluation.
+
+The experiment history is available under [`experiments/`](./experiments/).
+
+---
+
+## Repository Structure
+
+```text
+docpilot-rag-agent/
+├── data/
+│   └── AcmeTech_Employee_Handbook.pdf
+├── docs/
+│   ├── architecture.md
+│   └── RAG_Assistant.md
+├── experiments/
+│   ├── create_semantic_chunk_db.py
+│   ├── retrieval_diagnostic.py
+│   ├── retrieval-quality-v1.md
+│   └── semantic_chunker.py
+├── media/
+│   ├── agent_architecture.png
+│   └── app_screenshot.png
+├── scripts/
+│   ├── create_chroma_db.py
+│   ├── smoke_live_app.py
+│   └── smoke_test.sh
+├── src/
+│   ├── agents/
+│   │   ├── agents.py
+│   │   ├── knowledge_base_agent.py
+│   │   └── rag_assistant.py
+│   ├── client/
+│   │   └── client.py
+│   ├── core/
+│   ├── schema/
+│   ├── service/
+│   │   └── service.py
+│   ├── run_service.py
+│   └── streamlit_app.py
+├── tests/
+├── compose.yaml
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Agent orchestration | LangGraph |
+| API service | FastAPI |
+| Validation | Pydantic |
+| Async HTTP client | HTTPX |
+| User interface | Streamlit |
+| Vector store | Chroma |
+| RAG framework | LangChain |
+| Document parsing | PyPDF, docx2txt |
+| Testing | pytest |
+| Environment management | uv |
+| Containerization | Docker Compose |
+
+The repository supports multiple model providers through the underlying service framework. At least one compatible model provider must be configured before starting the application.
+
+---
+
+## Quickstart
+
+### Prerequisites
+
+- Python **3.12–3.14**
+- [`uv`](https://docs.astral.sh/uv/)
+- At least one supported LLM API key or local model configuration
+- Docker and Docker Compose, if using the containerized setup
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/wuchenxiaodao/docpilot-rag-agent.git
+cd docpilot-rag-agent
+```
+
+### 2. Create the environment file
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and configure at least one supported model provider.
+
+Do not commit real API keys or credential files.
+
+### 3. Install dependencies
+
+Install `uv` if it is not already available:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Install the project dependencies:
+
+```bash
 uv sync --frozen
-source .venv/bin/activate
-python src/run_service.py
+```
 
-# In another shell
+Activate the virtual environment:
+
+```bash
+source .venv/bin/activate
+```
+
+On Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+### 4. Prepare the vector store
+
+For the basic Chroma pipeline:
+
+```bash
+python scripts/create_chroma_db.py
+```
+
+For the semantic-chunking experiment:
+
+```bash
+python experiments/create_semantic_chunk_db.py
+```
+
+The exact embedding model and device configuration may need to be adjusted for the local environment.
+
+### 5. Start the FastAPI service
+
+```bash
+python src/run_service.py
+```
+
+By default, the API is available at `http://localhost:8080`.
+
+API documentation:
+
+```text
+http://localhost:8080/docs
+http://localhost:8080/redoc
+```
+
+### 6. Start the Streamlit interface
+
+In a second terminal:
+
+```bash
 source .venv/bin/activate
 streamlit run src/streamlit_app.py
 ```
 
-Run with docker
+The interface is normally available at `http://localhost:8501`.
 
-```sh
-echo 'OPENAI_API_KEY=your_openai_api_key' >> .env
+---
+
+## Run with Docker
+
+Create the local environment file first:
+
+```bash
+cp .env.example .env
+```
+
+Add the required model credentials to `.env`, then start the services:
+
+```bash
 docker compose watch
 ```
 
-### Architecture Diagram
+Alternatively:
 
-<img src="media/agent_architecture.png" width="600" alt="Agent architecture diagram">
-
-### Key Features
-
-1. **LangGraph Agent and latest features**: A customizable agent built using the LangGraph framework. Implements the latest LangGraph v1.0 features including human in the loop with `interrupt()`, flow control with `Command`, long-term memory with `Store`, and `langgraph-supervisor`.
-1. **FastAPI Service**: Serves the agent with both streaming and non-streaming endpoints.
-1. **Advanced Streaming**: A novel approach to support both token-based and message-based streaming.
-1. **AG-UI Protocol Support**: Every agent is also served over the [AG-UI protocol](https://docs.ag-ui.com) for connecting AG-UI compatible frontends like CopilotKit - see [docs](docs/AGUI.md).
-1. **Streamlit Interface**: Provides a user-friendly chat interface for interacting with the agent, including voice input and output.
-1. **Multiple Agent Support**: Run multiple agents in the service and call by URL path. Available agents and models are described in `/info`
-1. **Asynchronous Design**: Utilizes async/await for efficient handling of concurrent requests.
-1. **Content Moderation**: Implements Safeguard for content moderation (requires Groq API key).
-1. **RAG Agent**: A basic RAG agent implementation using ChromaDB - see [docs](docs/RAG_Assistant.md).
-1. **Feedback Mechanism**: Includes a star-based feedback system integrated with LangSmith.
-1. **Docker Support**: Includes Dockerfiles and a docker compose file for easy development and deployment.
-1. **Testing**: Includes robust unit and integration tests for the full repo.
-
-### Key Files
-
-The repository is structured as follows:
-
-- `src/agents/`: Defines several agents with different capabilities
-- `src/schema/`: Defines the protocol schema
-- `src/core/`: Core modules including LLM definition and settings
-- `src/service/service.py`: FastAPI service to serve the agents
-- `src/client/client.py`: Client to interact with the agent service
-- `src/streamlit_app.py`: Streamlit app providing a chat interface
-- `tests/`: Unit and integration tests
-
-## Setup and Usage
-
-1. Clone the repository:
-
-   ```sh
-   git clone https://github.com/JoshuaC215/agent-service-toolkit.git
-   cd agent-service-toolkit
-   ```
-
-2. Set up environment variables:
-   Create a `.env` file in the root directory. At least one LLM API key or configuration is required. See the [`.env.example` file](./.env.example) for a full list of available environment variables, including a variety of model provider API keys, header-based authentication, LangSmith tracing, testing and development modes, and OpenWeatherMap API key.
-
-3. You can now run the agent service and the Streamlit app locally, either with Docker or just using Python. The Docker setup is recommended for simpler environment setup and immediate reloading of the services when you make changes to your code.
-
-### Additional setup for specific AI providers
-
-- [Setting up Ollama](docs/Ollama.md)
-- [Setting up VertexAI](docs/VertexAI.md)
-- [Setting up RAG with ChromaDB](docs/RAG_Assistant.md)
-
-### Building or customizing your own agent
-
-To customize the agent for your own use case:
-
-1. Add your new agent to the `src/agents` directory. You can copy `research_assistant.py` or `chatbot.py` and modify it to change the agent's behavior and tools.
-1. Import and add your new agent to the `agents` dictionary in `src/agents/agents.py`. Your agent can be called by `/<your_agent_name>/invoke` or `/<your_agent_name>/stream`.
-1. Adjust the Streamlit interface in `src/streamlit_app.py` to match your agent's capabilities.
-
-### Handling Private Credential files
-
-If your agents or chosen LLM require file-based credential files or certificates, the `privatecredentials/` has been provided for your development convenience. All contents, excluding the `.gitkeep` files, are ignored by git and docker's build process. See [Working with File-based Credentials](docs/File_Based_Credentials.md) for suggested use.
-
-### Docker Setup
-
-This project includes a Docker setup for easy development and deployment. The `compose.yaml` file defines three services: `postgres`, `agent_service` and `streamlit_app`. The `Dockerfile` for each service is in their respective directories.
-
-For local development, we recommend using [docker compose watch](https://docs.docker.com/compose/file-watch/). This feature allows for a smoother development experience by automatically updating your containers when changes are detected in your source code.
-
-1. Make sure you have Docker and Docker Compose (>= [v2.23.0](https://docs.docker.com/compose/release-notes/#2230)) installed on your system.
-
-2. Create a `.env` file from the `.env.example`. At minimum, you need to provide an LLM API key (e.g., OPENAI_API_KEY).
-
-   ```sh
-   cp .env.example .env
-   # Edit .env to add your API keys
-   ```
-
-3. Build and launch the services in watch mode:
-
-   ```sh
-   docker compose watch
-   ```
-
-   This will automatically:
-   - Start a PostgreSQL database service that the agent service connects to
-   - Start the agent service with FastAPI
-   - Start the Streamlit app for the user interface
-
-4. The services will now automatically update when you make changes to your code:
-   - Changes in the relevant python files and directories will trigger updates for the relevant services.
-   - NOTE: If you make changes to the `pyproject.toml` or `uv.lock` files, you will need to rebuild the services by running `docker compose up --build`.
-
-5. Access the Streamlit app by navigating to `http://localhost:8501` in your web browser.
-
-6. The agent service API will be available at `http://0.0.0.0:8080`. You can also use the OpenAPI docs at `http://0.0.0.0:8080/redoc`.
-
-7. Use `docker compose down` to stop the services.
-
-This setup allows you to develop and test your changes in real-time without manually restarting the services.
-
-### Building other apps on the AgentClient
-
-The repo includes a generic `src/client/client.AgentClient` that can be used to interact with the agent service. This client is designed to be flexible and can be used to build other apps on top of the agent. It supports both synchronous and asynchronous invocations, and streaming and non-streaming requests.
-
-See the `src/run_client.py` file for full examples of how to use the `AgentClient`. A quick example:
-
-```python
-from client import AgentClient
-client = AgentClient()
-
-response = client.invoke("Tell me a brief joke?")
-response.pretty_print()
-# ================================== Ai Message ==================================
-#
-# A man walked into a library and asked the librarian, "Do you have any books on Pavlov's dogs and Schrödinger's cat?"
-# The librarian replied, "It rings a bell, but I'm not sure if it's here or not."
-
+```bash
+docker compose up --build
 ```
 
-### Development with LangGraph Studio
+The main services are exposed at:
 
-The agent supports [LangGraph Studio](https://langchain-ai.github.io/langgraph/concepts/langgraph_studio/), the IDE for developing agents in LangGraph.
+- Streamlit UI: `http://localhost:8501`
+- FastAPI service: `http://localhost:8080`
+- OpenAPI documentation: `http://localhost:8080/docs`
 
-`langgraph-cli[inmem]` is installed with `uv sync`. You can simply add your `.env` file to the root directory as described above, and then launch LangGraph Studio with `langgraph dev`. Customize `langgraph.json` as needed. See the [local quickstart](https://langchain-ai.github.io/langgraph/cloud/how-tos/studio/quick_start/#local-development-server) to learn more.
+Stop the services with:
 
-### Local development without Docker
-
-You can also run the agent service and the Streamlit app locally without Docker, just using a Python virtual environment.
-
-1. Create a virtual environment and install dependencies:
-
-   ```sh
-   uv sync --frozen
-   source .venv/bin/activate
-   ```
-
-2. Run the FastAPI server:
-
-   ```sh
-   python src/run_service.py
-   ```
-
-3. In a separate terminal, run the Streamlit app:
-
-   ```sh
-   streamlit run src/streamlit_app.py
-   ```
-
-4. Open your browser and navigate to the URL provided by Streamlit (usually `http://localhost:8501`).
-
-## Projects built with or inspired by agent-service-toolkit
-
-The following are a few of the public projects that drew code or inspiration from this repo.
-
-- **[PolyRAG](https://github.com/QuentinFuxa/PolyRAG)** - Extends agent-service-toolkit with RAG capabilities over both PostgreSQL databases and PDF documents.
-- **[alexrisch/agent-web-kit](https://github.com/alexrisch/agent-web-kit)** - A Next.JS frontend for agent-service-toolkit
-- **[raushan-in/dapa](https://github.com/raushan-in/dapa)** - Digital Arrest Protection App (DAPA) enables users to report financial scams and frauds efficiently via a user-friendly platform.
-
-**Please create a pull request editing the README or open a discussion with any new ones to be added!** Would love to include more projects.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-**A note on how this repo is maintained:** this is a solo-maintainer project, and issues, PRs, and discussions are triaged on a roughly biweekly cycle with help from an AI maintenance agent. Thanks for your patience if responses take a week or two — I will do my best to respond to truly urgent issues (vulnerability reports, etc.) or in-progress PRs within a few days. The full automation playbooks are versioned in [`docs/maintenance/`](docs/maintenance/) if you're curious how it works.
-
-Currently the tests need to be run using the local development without Docker setup. To run the tests for the agent service:
-
-1. Ensure you're in the project root directory and have activated your virtual environment.
-
-2. Install the development dependencies and pre-commit hooks:
-
-   ```sh
-   uv sync --frozen
-   pre-commit install
-   ```
-
-3. Run the tests using pytest:
-
-   ```sh
-   pytest
-   ```
-
-### Smoke testing optional dependencies
-
-Some integrations aren't exercised by the unit suite or the default CI run because they
-need real infrastructure: the Postgres and MongoDB checkpointers, the AG-UI endpoint, and
-LangFuse tracing. `scripts/smoke_test.sh` spins up each dependency in Docker, runs the
-service against it, verifies the integration end-to-end (including a check that the
-intended backend was actually used, not a silent SQLite fallback), and tears it down.
-
-```sh
-./scripts/smoke_test.sh                 # default: postgres, mongo, agui
-./scripts/smoke_test.sh mongo           # a single target
-./scripts/smoke_test.sh langfuse        # heavy: starts LangFuse's full self-host stack
-./scripts/smoke_test.sh all             # everything, including langfuse
+```bash
+docker compose down
 ```
 
-These are opt-in confidence checks for a maintainer or agent — not part of CI. Run the
-target that matches what you changed rather than the whole set. The optional add-on
-compose files live in `docker/` (e.g. `docker/compose.mongo.yaml`), layered on top of the
-default `compose.yaml` so the default stack stays lightweight.
+---
+
+## Run the Retrieval Evaluation
+
+Run the retrieval diagnostics with:
+
+```bash
+python experiments/retrieval_diagnostic.py
+```
+
+The diagnostic workflow reports the retrieved chunks for each question together with their ranks and scores.
+
+When comparing experiments, keep these variables fixed unless they are the explicit subject of the experiment:
+
+- corpus version;
+- frozen question set;
+- evidence labels;
+- embedding model;
+- chunking version;
+- vector-store configuration;
+- `top-k`;
+- metric implementation.
+
+If chunk boundaries or document embeddings change, rebuild the vector store before running the evaluation.
+
+---
+
+## Testing
+
+Run the test suite:
+
+```bash
+pytest
+```
+
+Run with coverage:
+
+```bash
+pytest --cov=src
+```
+
+Run formatting and static checks:
+
+```bash
+ruff check .
+ruff format --check .
+```
+
+The repository also contains optional smoke tests for integrations that require live infrastructure:
+
+```bash
+./scripts/smoke_test.sh
+```
+
+Run only the smoke-test target related to the component being changed when possible.
+
+---
+
+## Example Evaluation Interpretation
+
+Assume a question's labeled evidence first appears at rank 2:
+
+```text
+Rank 1: unrelated chunk
+Rank 2: correct evidence
+Rank 3: partially related chunk
+```
+
+For this question:
+
+- Recall@1 contribution: `0`
+- Recall@3 contribution: `1`
+- Reciprocal rank: `1/2`
+
+For a multi-hop question requiring chunks A and B:
+
+```text
+Top 3 results: A, C, B
+```
+
+The question counts as full-coverage@3 because both required chunks are present.
+
+If only A appears in the top three, the question does not count as full coverage even if A alone is highly relevant.
+
+---
+
+## Grounding Policy
+
+The RAG agent is designed around the following rules:
+
+1. Use retrieved documents as the primary source of truth.
+2. Do not invent information that is absent from the retrieved evidence.
+3. State clearly when the evidence is insufficient.
+4. Preserve source metadata for traceability.
+5. Acknowledge conflicts when retrieved documents disagree.
+6. Separate retrieval quality from generation quality during evaluation.
+
+These rules reduce unsupported answers, but they do not guarantee that every generated response is correct. Production use still requires domain-specific evaluation and monitoring.
+
+---
+
+## Known Limitations
+
+- Current benchmark results are based on a small, project-specific corpus.
+- Retrieval metrics do not directly measure final-answer correctness.
+- Multi-hop retrieval still has room for improvement.
+- Results can change when the embedding model, chunk boundaries, or corpus changes.
+- Similarity scores are not calibrated probabilities.
+- Out-of-domain rejection requires separate evaluation from answerable-question recall.
+- Local embedding models may require significant memory or GPU resources.
+- The Streamlit interface is intended primarily as a development and demonstration client.
+
+---
+
+## Current Engineering Focus
+
+- Improve multi-hop full evidence coverage.
+- Make SSE timeout behavior explicit and testable.
+- Standardize error responses across streaming and non-streaming endpoints.
+- Handle client disconnects and coroutine cancellation safely.
+- Prevent blocking work from stalling the async event loop.
+- Add end-to-end observability for retrieval, generation, completion, and failure events.
+- Extend evaluation from retrieval quality to grounded-answer quality.
+
+---
+
+## Roadmap
+
+- [x] Document ingestion for PDF and DOCX
+- [x] Chroma-based vector retrieval
+- [x] Source-aware grounded generation
+- [x] Frozen retrieval evaluation set
+- [x] Recall@1, Recall@3, and MRR reporting
+- [x] Semantic chunking experiments
+- [x] Per-question retrieval diagnostics
+- [x] Multi-hop evidence coverage evaluation
+- [ ] Improve multi-hop full-coverage@3
+- [ ] Complete SSE timeout and disconnect handling
+- [ ] Unify streaming and non-streaming error contracts
+- [ ] Add generation-level faithfulness evaluation
+- [ ] Add repeatable end-to-end benchmark commands
+- [ ] Add a deployable public demo
+
+---
+
+## Upstream Attribution
+
+DocPilot is based on [`JoshuaC215/agent-service-toolkit`](https://github.com/JoshuaC215/agent-service-toolkit), which provides the original LangGraph, FastAPI, client, and Streamlit service framework.
+
+This fork focuses on adapting that framework into an evaluable document RAG system, including:
+
+- document-specific retrieval;
+- semantic chunking experiments;
+- frozen evaluation data;
+- retrieval-quality metrics;
+- multi-hop coverage analysis;
+- grounded-answer behavior;
+- streaming reliability work.
+
+Please refer to the upstream repository for the original framework and its broader collection of example agents and integrations.
+
+---
+
+## Security
+
+- Never commit `.env` files containing real secrets.
+- Never commit private credential files.
+- Use placeholder credentials in tests.
+- Review logs before sharing them because retrieved document text may contain sensitive information.
+- Treat uploaded documents as untrusted input in production deployments.
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the [MIT License](./LICENSE).
+
+The original upstream project is also distributed under the MIT License. See the repository history and upstream project for attribution details.
