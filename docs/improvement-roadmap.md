@@ -5,15 +5,16 @@
 
 ## 阶段 0：先能真跑（小改动，先做）
 
-- [ ] 1. 关闭 `.env` 中 `USE_FAKE_MODEL=true`，接入真实 LLM
-- [ ] 2. 嵌入模型 / Chroma 检索器改为单例，消除每次检索的模型加载开销（`tools.py: load_chroma_db()` 每次调用都重新加载）
-- [ ] 3. `DEFAULT_AGENT` 从 `research-assistant` 改为 `rag-assistant`，让默认入口就是 DocPilot
+- [ ] 1. 关闭 `.env` 中 `USE_FAKE_MODEL=true`，接入真实 LLM（待模型切换方案确认：Qwen3.6 本地 Ollama，本机尚未安装）
+- [x] 2. 嵌入模型 / Chroma 检索器改为单例，消除每次检索的模型加载开销（2026-08-22 完成：按 (库路径, 模型路径) 缓存，环境变量变更仍生效）
+- [x] 3. `DEFAULT_AGENT` 从 `research-assistant` 改为 `rag-assistant`（2026-08-22 完成：同步更新 test_info 断言期望值）
+- [x] 13. 钉住 `CHROMA_DB_PATH`（v2 库）与 `EMBEDDING_MODEL_PATH` 到 `.env`，避免代码默认值静默指向 v1 旧库（2026-08-22 完成；`.env.example` 已补文档，废弃库目录 v1/test 待确认后清理）
 
 ## 阶段 1：像个产品（用户可感知）
 
 - [ ] 4. 界面支持上传 PDF/DOCX 并在线入库（替代离线脚本建库）
-- [ ] 5. 侧边栏会话历史列表（当前只能靠 URL 里的 thread_id 找回）
-- [ ] 6. 可点击引用：把工具层已有的 citations（文件/页码/chunk_id）渲染成引用卡片，而非纯文本 "Sources:"
+- [ ] 5. 侧边栏会话历史列表（当前只能靠 URL 里的 thread_id 找回）；注意需先在后端加会话枚举端点，service.py 目前只有按 thread_id 取历史
+- [ ] 6. 可点击引用：把工具层已有的 citations（文件/页码/chunk_id）渲染成引用卡片，而非纯文本 "Sources:"；注意 markdown 文档的页码是占位符（p1），只有 PDF 页码真实
 
 ## 阶段 2：答得更准（failure_analysis.md 已给方向）
 
@@ -30,3 +31,5 @@
 ---
 
 原则：一次只做一项；涉及检索质量的改动（7-9）每项先在 50 题评测集上跑基线对比再合入。
+
+已知通道坑（Git Bash，2026-08-22 实测）：conda 注入的 `SSL_CERT_FILE` 指向不存在的路径会让 ollama 包 import 失败，跑测试须加 `env -u SSL_CERT_FILE`；`tests/app/test_streamlit_app.py::test_app_simple_non_streaming` 在本通道既有失败（Streamlit 读 home 目录超时，干净树同样失败），与代码改动无关。
