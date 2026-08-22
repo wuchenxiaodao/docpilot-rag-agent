@@ -340,3 +340,26 @@ def test_info(agent_client):
     with pytest.raises(AgentClientError) as exc:
         agent_client.invoke("test")
     assert "No agent selected. Use update_agent() to select an agent." in str(exc.value)
+
+
+def test_list_threads(agent_client):
+    """Test listing conversation threads."""
+    from httpx import Response, Request
+
+    THREADS = [
+        {"thread_id": "t1", "updated_at": "2026-08-23T09:00:00+00:00",
+         "preview": "hello", "message_count": 2}
+    ]
+    mock_response = Response(200, json=THREADS, request=Request("GET", "http://test/threads"))
+    with patch("httpx.get", return_value=mock_response) as mock_get:
+        threads = agent_client.list_threads()
+        assert threads == THREADS
+        assert mock_get.call_args.args[0] == "http://test/threads"
+        assert mock_get.call_args.kwargs["params"] == {"limit": 50}
+
+    error_response = Response(
+        500, text="Internal Server Error", request=Request("GET", "http://test/threads")
+    )
+    with patch("httpx.get", return_value=error_response):
+        with pytest.raises(AgentClientError):
+            agent_client.list_threads()

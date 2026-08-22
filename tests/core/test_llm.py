@@ -7,13 +7,16 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from core.llm import get_model
+from core.settings import settings
 from schema.models import (
     AnthropicModelName,
     FakeModelName,
     GroqModelName,
     OllamaModelName,
+    OpenAICompatibleName,
     OpenAIModelName,
 )
 
@@ -76,6 +79,20 @@ def test_get_model_ollama():
         assert isinstance(model, ChatOllama)
         assert model.model == "llama3.3"
         assert model.temperature == 0.5
+
+
+def test_get_model_openai_compatible():
+    with (
+        patch("core.settings.settings.COMPATIBLE_MODEL", "qwen3.6:35b-a3b"),
+        patch("core.settings.settings.COMPATIBLE_BASE_URL", "http://localhost:11434/v1"),
+        patch("core.settings.settings.COMPATIBLE_API_KEY", SecretStr("ollama")),
+    ):
+        model = get_model(OpenAICompatibleName.OPENAI_COMPATIBLE)
+    assert isinstance(model, ChatOpenAI)
+    assert model.model_name == "qwen3.6:35b-a3b"
+    assert str(model.openai_api_base) == "http://localhost:11434/v1"
+    assert model.temperature == settings.COMPATIBLE_TEMPERATURE
+    assert model.streaming is True
 
 
 def test_get_model_fake():

@@ -162,6 +162,28 @@ class FeedbackResponse(BaseModel):
     status: Literal["success"] = "success"
 
 
+class IngestResponse(BaseModel):
+    """Result of ingesting an uploaded document into the knowledge base."""
+
+    status: Literal["success"] = "success"
+    filename: str = Field(description="Normalized source filename stored in metadata.")
+    chunks_added: int = Field(description="Number of chunks written.")
+    chunks_deleted: int = Field(
+        description="Number of previous chunks of the same source replaced.", default=0
+    )
+
+
+class ThreadInfo(BaseModel):
+    """Summary of one conversation thread (latest checkpoint)."""
+
+    thread_id: str
+    updated_at: str | None = Field(
+        default=None, description="Timestamp of the latest checkpoint (ISO format)."
+    )
+    preview: str = Field(default="", description="First human message, trimmed.")
+    message_count: int = Field(default=0, description="Messages in the latest state.")
+
+
 class ChatHistoryInput(BaseModel):
     """Input for retrieving chat history."""
 

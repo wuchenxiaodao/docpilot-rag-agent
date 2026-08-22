@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from collections.abc import AsyncGenerator, Generator
@@ -56,6 +57,25 @@ class AgentClient:
         if self.auth_secret:
             headers["Authorization"] = f"Bearer {self.auth_secret}"
         return headers
+
+    def list_threads(self, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        List conversation threads from the agent service, newest first.
+
+        Returns a list of ThreadInfo dicts: thread_id, updated_at, preview,
+        message_count.
+        """
+        try:
+            response = httpx.get(
+                f"{self.base_url}/threads",
+                params={"limit": limit},
+                headers=self._headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise AgentClientError(f"Error listing threads: {e}")
+        return response.json()
 
     def retrieve_info(self) -> None:
         try:
@@ -315,6 +335,29 @@ class AgentClient:
                                 yield parsed
             except httpx.HTTPError as e:
                 raise AgentClientError(f"Error: {e}")
+
+    async def aingest(self, filename: str, content: bytes) -> dict[str, Any]:
+        """
+        Upload a PDF/DOCX into the DocPilot knowledge base (chunk + embed + index).
+
+        Returns the parsed IngestResponse: filename, chunks_added, chunks_deleted.
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/ingest",
+                    files={"file": (filename, content)},
+                    headers=self._headers,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPError as e:
+                raise AgentClientError(f"Error: {e}")
+
+    def ingest(self, filename: str, content: bytes) -> dict[str, Any]:
+        """Sync variant of aingest()."""
+        return asyncio.run(self.aingest(filename, content))
 
     async def acreate_feedback(
         self, run_id: str, key: str, score: float, kwargs: dict[str, Any] = {}

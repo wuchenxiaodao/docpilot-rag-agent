@@ -139,6 +139,62 @@ async def main() -> None:
                 del st.session_state.last_audio
             st.rerun()
 
+        # Upload PDF/DOCX into the DocPilot knowledge base (rag-assistant only)
+        if agent_client.agent == "rag-assistant":
+            uploaded = st.file_uploader(
+                "Add a document to the knowledge base",
+                type=["pdf", "docx"],
+                help="PDF/DOCX is chunked, embedded and indexed on upload; "
+                "re-uploading the same filename replaces its chunks.",
+            )
+            if uploaded is not None:
+                content = uploaded.getvalue()
+                size_mb = len(content) / (1024 * 1024)
+                if st.button(f":material/upload: Index “{uploaded.name}” ({size_mb:.1f} MB)"):
+                    try:
+                        with st.spinner(f"Indexing {uploaded.name}..."):
+                            result = await agent_client.aingest(uploaded.name, content)
+                        st.success(
+                            f"Indexed **{result['filename']}**: "
+                            f"{result['chunks_added']} chunks added"
+                            + (
+                                f" (replaced {result['chunks_deleted']} old chunks)"
+                                if result.get("chunks_deleted")
+                                else ""
+                            )
+                        )
+                    except AgentClientError as e:
+                        st.error(f"Failed to index document: {e}")
+
+        # Session history list: enumerate threads from the service and resume on click
+        with st.expander(":material/history: Chat history"):
+            col_refresh, _ = st.columns([1, 1.4])
+            if col_refresh.button("Refresh", use_container_width=True):
+                st.session_state.pop("thread_list", None)
+                st.rerun()
+            try:
+                if "thread_list" not in st.session_state:
+                    st.session_state.thread_list = agent_client.list_threads()
+            except AgentClientError as e:
+                st.caption(f"History unavailable: {e}")
+                st.session_state.thread_list = []
+            for t in st.session_state.thread_list[:20]:
+                is_current = t["thread_id"] == st.session_state.thread_id
+                label = (t.get("preview") or t["thread_id"][:8]) + (" ✅" if is_current else "")
+                if st.button(label, key=f"thread-{t['thread_id']}", use_container_width=True):
+                    st.session_state.thread_id = t["thread_id"]
+                    st.query_params["thread_id"] = t["thread_id"]
+                    try:
+                        st.session_state.messages = agent_client.get_history(
+                            thread_id=t["thread_id"], agent=agent_client.agent
+                        ).messages
+                    except AgentClientError:
+                        st.session_state.messages = []
+                        st.error("No message history found for this Thread ID.")
+                    if "last_audio" in st.session_state:
+                        del st.session_state.last_audio
+                    st.rerun()
+
         with st.popover(":material/settings: Settings", use_container_width=True):
             model_idx = agent_client.info.models.index(agent_client.info.default_model)
             model = st.selectbox("LLM to use", options=agent_client.info.models, index=model_idx)
@@ -215,6 +271,26 @@ async def main() -> None:
         st.caption(
             "Made with :material/favorite: by [Joshua](https://www.linkedin.com/in/joshua-k-carroll/) in Oakland"
         )
+
+        # Improvement roadmap panel: parse docs/improvement-roadmap.md so the UI
+        # always reflects the same source of truth the work is tracked in.
+        with st.expander(":material/checklist: 改造路线图", expanded=False):
+            if "roadmap_md" not in st.session_state:
+                try:
+                    roadmap_path = os.path.join(os.path.dirname(__file__), "..", "docs", "improvement-roadmap.md")
+                    with open(roadmap_path, encoding="utf-8") as f:
+                        st.session_state.roadmap_md = f.read()
+                except OSError:
+                    st.session_state.roadmap_md = ""
+            stage = None
+            for line in st.session_state.roadmap_md.splitlines():
+                if line.startswith("## "):
+                    stage = line[3:].strip()
+                    st.markdown(f"**{stage}**")
+                elif line.startswith("- [x] "):
+                    st.markdown(f"- :material/check: {line[6:].split('（')[0].strip()}")
+                elif line.startswith("- [ ] "):
+                    st.markdown(f"- :material/radio_button_unchecked: {line[6:].split('（')[0].strip()}")
 
     # Draw existing messages
     messages: list[ChatMessage] = st.session_state.messages
@@ -315,6 +391,25 @@ async def main() -> None:
             await handle_feedback()
 
 
+def _render_citations(citations: list[dict]) -> None:
+    """把结构化引用渲染成可展开的来源卡片。
+
+    v2 库中 markdown 文档的 page 是占位符（p1），只有 PDF 页码真实——
+    展示时按扩展名区分，避免误导。
+    """
+    st.markdown("**📚 引用来源**")
+    for c in citations:
+        name = os.path.basename(str(c.get("source", "")))
+        page = c.get("page")
+        is_pdf = name.lower().endswith(".pdf")
+        loc = f"第 {page} 页" if (page is not None and is_pdf) else "片段"
+        excerpt = c.get("excerpt", "")
+        with st.expander(f":material/description: {name} · {loc}"):
+            st.caption(c.get("chunk_id", ""))
+            if excerpt:
+                st.write(excerpt)
+
+
 async def draw_messages(
     messages_agen: AsyncGenerator[ChatMessage | str, None],
     is_new: bool = False,
@@ -340,6 +435,9 @@ async def draw_messages(
     # Keep track of the last message container
     last_message_type = None
     st.session_state.last_message = None
+
+    # Citations arriving via custom messages attach to the next AI answer
+    pending_citations: list[dict] = []
 
     # Placeholder for intermediate streaming tokens
     streaming_content = ""
@@ -395,6 +493,10 @@ async def draw_messages(
                         else:
                             st.write(msg.content)
 
+                    if pending_citations and msg.content:
+                        _render_citations(pending_citations)
+                        pending_citations = []
+
                     if msg.tool_calls:
                         # Create a status container for each tool call and store the
                         # status container by ID to ensure results are mapped to the
@@ -443,6 +545,14 @@ async def draw_messages(
                             status.update(state="complete")
 
             case "custom":
+                # DocPilot citations: attach to the next AI answer, don't render a
+                # standalone bubble. See agents.rag_assistant.collect_citations.
+                if "docpilot_citations" in msg.custom_data:
+                    if is_new:
+                        st.session_state.messages.append(msg)
+                    pending_citations = msg.custom_data["docpilot_citations"]
+                    continue
+
                 # CustomData example used by the bg-task-agent
                 # See:
                 # - src/agents/utils.py CustomData

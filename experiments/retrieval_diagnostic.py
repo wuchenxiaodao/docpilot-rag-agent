@@ -3,11 +3,9 @@
 DocPilot Retrieval Quality — Baseline (Configuration A)
 Measures Recall@1, Recall@3, MRR, and score distributions.
 """
-import os
-import sys
 
-import chromadb
-from chromadb import Documents, EmbeddingFunction, Embeddings
+import os
+
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -86,11 +84,11 @@ def build_embeddings(**extra_kwargs) -> HuggingFaceEmbeddings:
 
 
 def run_evaluation(label: str, embeddings: HuggingFaceEmbeddings):
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Configuration: {label}")
     print(f"  Query encode kwargs: {embeddings.query_encode_kwargs}")
     print(f"  Encode kwargs: {embeddings.encode_kwargs}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     chroma_db = Chroma(persist_directory=CHROMA_DB_PATH, embedding_function=embeddings)
     retriever = chroma_db.as_retriever(search_kwargs={"k": 3})
@@ -110,12 +108,14 @@ def run_evaluation(label: str, embeddings: HuggingFaceEmbeddings):
         for rank, doc in enumerate(docs, start=1):
             content = doc.page_content[:120].replace("\n", " ")
             source = doc.metadata.get("source", "Unknown")
-            retrieved.append({
-                "rank": rank,
-                "content_prefix": content,
-                "source": source,
-                "page_content": doc.page_content,
-            })
+            retrieved.append(
+                {
+                    "rank": rank,
+                    "content_prefix": content,
+                    "source": source,
+                    "page_content": doc.page_content,
+                }
+            )
 
         # Determine if expected evidence is in results for in-domain questions
         correct_rank = None
@@ -139,13 +139,15 @@ def run_evaluation(label: str, embeddings: HuggingFaceEmbeddings):
             # Out-of-domain — not expected to find anything
             reciprocal_ranks.append(0.0)
 
-        results.append({
-            "id": qid,
-            "question": question,
-            "is_in_domain": is_in_domain,
-            "correct_rank": correct_rank,
-            "retrieved": retrieved,
-        })
+        results.append(
+            {
+                "id": qid,
+                "question": question,
+                "is_in_domain": is_in_domain,
+                "correct_rank": correct_rank,
+                "retrieved": retrieved,
+            }
+        )
 
         status = "OK" if correct_rank == 1 else (f"@{correct_rank}" if correct_rank else "MISS")
         print(f"  {qid}: {question[:60]:60s} → Rank {correct_rank or '—'} {status}")
@@ -154,7 +156,6 @@ def run_evaluation(label: str, embeddings: HuggingFaceEmbeddings):
 
     # Separate in-domain for recall
     in_domain_results = [r for r in results if r["is_in_domain"]]
-    out_results = [r for r in results if not r["is_in_domain"]]
 
     r1 = sum(1 for r in in_domain_results if r["correct_rank"] == 1) / len(in_domain_results)
     r3 = sum(1 for r in in_domain_results if r["correct_rank"] is not None) / len(in_domain_results)
@@ -162,19 +163,22 @@ def run_evaluation(label: str, embeddings: HuggingFaceEmbeddings):
 
     # In-domain only MRR
     in_domain_rr = [
-        1.0 / r["correct_rank"] if r["correct_rank"] is not None else 0.0
-        for r in in_domain_results
+        1.0 / r["correct_rank"] if r["correct_rank"] is not None else 0.0 for r in in_domain_results
     ]
     mrr_in = sum(in_domain_rr) / len(in_domain_rr) if in_domain_rr else 0.0
 
     print(f"\n  ── Metrics ({label}) ──")
-    print(f"  In-domain Recall@1: {r1:.1%}  ({int(r1 * len(in_domain_results))}/{len(in_domain_results)})")
-    print(f"  In-domain Recall@3: {r3:.1%}  ({int(r3 * len(in_domain_results))}/{len(in_domain_results)})")
+    print(
+        f"  In-domain Recall@1: {r1:.1%}  ({int(r1 * len(in_domain_results))}/{len(in_domain_results)})"
+    )
+    print(
+        f"  In-domain Recall@3: {r3:.1%}  ({int(r3 * len(in_domain_results))}/{len(in_domain_results)})"
+    )
     print(f"  MRR (all 10):       {mrr:.3f}")
     print(f"  MRR (in-domain):    {mrr_in:.3f}")
 
     # Now do similarity_search_with_relevance_scores for score distribution
-    print(f"\n  ── Score Distribution ──")
+    print("\n  ── Score Distribution ──")
     for q in all_questions:
         qid = q["id"]
         question = q["question"]
@@ -214,9 +218,9 @@ if __name__ == "__main__":
     results_b, metrics_b = run_evaluation("B — With prompt_name='query'", emb_b)
 
     # ── Comparison ──────────────────────────────────────────────────────────
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  Comparison Summary")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for metric in ["recall@1", "recall@3", "mrr", "mrr_in"]:
         va = metrics_a[metric]
         vb = metrics_b[metric]

@@ -1,6 +1,7 @@
 # DocPilot 请求架构
 
 ## 核心调用链
+
 graph LR
 U["用户"] --> UI["Streamlit UI"]
 UI --> C["AgentClient"]
@@ -26,6 +27,7 @@ C --> UI
 - **Model**：生成回答内容。
 
 ## 流式调用
+
 st.chat_input()
 → AgentClient.astream()
 → StreamInput
