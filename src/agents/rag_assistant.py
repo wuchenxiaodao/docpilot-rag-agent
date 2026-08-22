@@ -1,8 +1,10 @@
+import json
+import re
 from datetime import datetime
 from typing import Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import (
     RunnableConfig,
     RunnableLambda,
@@ -11,9 +13,11 @@ from langchain_core.runnables import (
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.managed import RemainingSteps
 from langgraph.prebuilt import ToolNode
+from langgraph.types import StreamWriter
 
 from agents.safeguard import Safeguard, SafeguardOutput, SafetyAssessment
 from agents.tools import database_search
+from agents.utils import CustomData
 from core import get_model, settings
 
 
@@ -25,6 +29,7 @@ class AgentState(MessagesState, total=False):
 
     safety: SafeguardOutput
     remaining_steps: RemainingSteps
+    citations: list[dict]
 
 
 tools = [database_search]
@@ -94,10 +99,35 @@ async def block_unsafe_content(state: AgentState, config: RunnableConfig) -> Age
     return {"messages": [format_safety_message(safety)]}
 
 
+_CITATIONS_RE = re.compile(r"CITATIONS_JSON: (\[.*\])\s*$", re.DOTALL)
+
+
+async def collect_citations(state: AgentState, writer: StreamWriter) -> AgentState:
+    """工具调用后：解析 ToolMessage 末尾的 CITATIONS_JSON，写入 state 并向前端发射。
+
+    CustomData 只走 custom 流（不进 messages），LLM 不会看到它。
+    """
+    citations: list[dict] = []
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, ToolMessage):
+            match = _CITATIONS_RE.search(str(msg.content))
+            if match:
+                try:
+                    citations = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    citations = []
+            break
+
+    if citations:
+        CustomData(data={"docpilot_citations": citations}).dispatch(writer)
+    return {"citations": citations, "messages": []}
+
+
 # Define the graph
 agent = StateGraph(AgentState)
 agent.add_node("model", acall_model)
 agent.add_node("tools", ToolNode(tools))
+agent.add_node("collect_citations", collect_citations)
 agent.add_node("guard_input", safeguard_input)
 agent.add_node("block_unsafe_content", block_unsafe_content)
 agent.set_entry_point("guard_input")
@@ -120,8 +150,9 @@ agent.add_conditional_edges(
 # Always END after blocking unsafe content
 agent.add_edge("block_unsafe_content", END)
 
-# Always run "model" after "tools"
-agent.add_edge("tools", "model")
+# Always run "collect_citations" then "model" after "tools"
+agent.add_edge("tools", "collect_citations")
+agent.add_edge("collect_citations", "model")
 
 
 # After "model", if there are tool calls, run "tools". Otherwise END.

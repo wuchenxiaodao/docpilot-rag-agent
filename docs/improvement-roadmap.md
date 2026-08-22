@@ -14,7 +14,7 @@
 
 - [x] 4. 界面支持上传 PDF/DOCX 并在线入库（2026-08-23 完成：POST /ingest 端点 + AgentClient.ingest + 侧边栏上传控件；RecursiveCharacterTextSplitter 切分，同名按 basename 先删后加幂等替换；真实库冒烟通过，含 9 项新测试）
 - [x] 5. 侧边栏会话历史列表（2026-08-23 完成：GET /threads 枚举端点 + AgentClient.list_threads + 侧边栏 Chat history 面板（点击恢复会话）。注意：sqlite 的 AsyncSqliteSaver 不支持跨线程 alist，线程 ID 列表改用只读 SQL 按 rowid 近期排序，详情走公开 API aget_tuple；postgres 部署暂返回 503，user_id 过滤留待 #10 用户体系）
-- [ ] 6. 可点击引用：把工具层已有的 citations（文件/页码/chunk_id）渲染成引用卡片，而非纯文本 "Sources:"；注意 markdown 文档的页码是占位符（p1），只有 PDF 页码真实
+- [x] 6. 可点击引用：引用卡片挂在 AI 回答下方（2026-08-23 完成：工具输出附 CITATIONS_JSON → collect_citations 节点经 custom 流向前端发射 → 展开式来源卡片带 chunk_id 与原文摘录；markdown 假页码按扩展名区分只显示"片段"；同批附侧边栏改造路线图面板，实时读本文件渲染）
 
 ## 阶段 2：答得更准（failure_analysis.md 已给方向）
 

@@ -272,6 +272,26 @@ async def main() -> None:
             "Made with :material/favorite: by [Joshua](https://www.linkedin.com/in/joshua-k-carroll/) in Oakland"
         )
 
+        # Improvement roadmap panel: parse docs/improvement-roadmap.md so the UI
+        # always reflects the same source of truth the work is tracked in.
+        with st.expander(":material/checklist: 改造路线图", expanded=False):
+            if "roadmap_md" not in st.session_state:
+                try:
+                    roadmap_path = os.path.join(os.path.dirname(__file__), "..", "docs", "improvement-roadmap.md")
+                    with open(roadmap_path, encoding="utf-8") as f:
+                        st.session_state.roadmap_md = f.read()
+                except OSError:
+                    st.session_state.roadmap_md = ""
+            stage = None
+            for line in st.session_state.roadmap_md.splitlines():
+                if line.startswith("## "):
+                    stage = line[3:].strip()
+                    st.markdown(f"**{stage}**")
+                elif line.startswith("- [x] "):
+                    st.markdown(f"- :material/check: {line[6:].split('（')[0].strip()}")
+                elif line.startswith("- [ ] "):
+                    st.markdown(f"- :material/radio_button_unchecked: {line[6:].split('（')[0].strip()}")
+
     # Draw existing messages
     messages: list[ChatMessage] = st.session_state.messages
 
@@ -371,6 +391,25 @@ async def main() -> None:
             await handle_feedback()
 
 
+def _render_citations(citations: list[dict]) -> None:
+    """把结构化引用渲染成可展开的来源卡片。
+
+    v2 库中 markdown 文档的 page 是占位符（p1），只有 PDF 页码真实——
+    展示时按扩展名区分，避免误导。
+    """
+    st.markdown("**📚 引用来源**")
+    for c in citations:
+        name = os.path.basename(str(c.get("source", "")))
+        page = c.get("page")
+        is_pdf = name.lower().endswith(".pdf")
+        loc = f"第 {page} 页" if (page is not None and is_pdf) else "片段"
+        excerpt = c.get("excerpt", "")
+        with st.expander(f":material/description: {name} · {loc}"):
+            st.caption(c.get("chunk_id", ""))
+            if excerpt:
+                st.write(excerpt)
+
+
 async def draw_messages(
     messages_agen: AsyncGenerator[ChatMessage | str, None],
     is_new: bool = False,
@@ -396,6 +435,9 @@ async def draw_messages(
     # Keep track of the last message container
     last_message_type = None
     st.session_state.last_message = None
+
+    # Citations arriving via custom messages attach to the next AI answer
+    pending_citations: list[dict] = []
 
     # Placeholder for intermediate streaming tokens
     streaming_content = ""
@@ -451,6 +493,10 @@ async def draw_messages(
                         else:
                             st.write(msg.content)
 
+                    if pending_citations and msg.content:
+                        _render_citations(pending_citations)
+                        pending_citations = []
+
                     if msg.tool_calls:
                         # Create a status container for each tool call and store the
                         # status container by ID to ensure results are mapped to the
@@ -499,6 +545,14 @@ async def draw_messages(
                             status.update(state="complete")
 
             case "custom":
+                # DocPilot citations: attach to the next AI answer, don't render a
+                # standalone bubble. See agents.rag_assistant.collect_citations.
+                if "docpilot_citations" in msg.custom_data:
+                    if is_new:
+                        st.session_state.messages.append(msg)
+                    pending_citations = msg.custom_data["docpilot_citations"]
+                    continue
+
                 # CustomData example used by the bg-task-agent
                 # See:
                 # - src/agents/utils.py CustomData

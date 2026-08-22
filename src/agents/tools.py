@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import re
@@ -45,12 +46,16 @@ calculator: BaseTool = tool(calculator_func)
 calculator.name = "Calculator"
 
 
-class Citation(TypedDict):
-    """一条引用记录。source 必有，page 和 chunk_id 可能缺失。"""
-
+class _CitationRequired(TypedDict):
     source: str
     page: int | None
     chunk_id: str | None
+
+
+class Citation(_CitationRequired, total=False):
+    """一条引用记录。source 必有，page 和 chunk_id 可能缺失；excerpt 为原文摘录。"""
+
+    excerpt: str
 
 
 class SearchResult(TypedDict):
@@ -92,6 +97,7 @@ def build_citations(docs) -> list[Citation]:
                 "source": filename,
                 "page": page,
                 "chunk_id": chunk_id,
+                "excerpt": " ".join(doc.page_content.split())[:160],
             }
         )
 
@@ -220,14 +226,17 @@ def _database_search_for_tool(query: str) -> str:
     """Searches the configured DocPilot PDF/DOCX knowledge base via ChromaDB.
 
     Returns relevant text fragments and source metadata from indexed documents.
-    给 LLM 用的薄包装：把结构化结果转成模型能读的文本。
+    给 LLM 用的薄包装：把结构化结果转成模型能读的文本；末尾附一行
+    CITATIONS_JSON（结构化引用），由 collect_citations 节点解析给前端，
+    模型可忽略该行。
     """
     result = database_search_func(query)
 
     if result["status"] == "no_answer":
         return "NO_RELEVANT_DOCUMENTS_FOUND"
 
-    return result["context"]
+    citations_json = json.dumps(result["citations"], ensure_ascii=False)
+    return f"{result['context']}\n\nCITATIONS_JSON: {citations_json}"
 
 
 database_search: BaseTool = tool(_database_search_for_tool)

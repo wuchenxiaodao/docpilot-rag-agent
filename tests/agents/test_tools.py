@@ -1,6 +1,7 @@
 """Tests for DocPilot retrieval tools (format_contexts, path resolution)."""
 
 import importlib.util
+import json
 import os
 import sys
 from types import SimpleNamespace
@@ -294,11 +295,13 @@ class TestDatabaseSearchContract:
             "source": "handbook.pdf",
             "page": 1,
             "chunk_id": "handbook-p1-c2",
+            "excerpt": "Mission content",
         }
         assert result["citations"][1] == {
             "source": "handbook.pdf",
             "page": 3,
             "chunk_id": "handbook-p3-c9",
+            "excerpt": "Remote work policy",
         }
 
     def test_citations_dedup_preserves_order(self, monkeypatch):
@@ -333,4 +336,10 @@ class TestDatabaseSearchContract:
             )
         ]
         _patch_retriever(monkeypatch, docs)
-        assert _database_search_for_tool("x") == database_search_func("x")["context"]
+        tool_out = _database_search_for_tool("x")
+        # 工具输出 = 检索 context + 末尾一行结构化引用（供前端使用）
+        assert tool_out.startswith(database_search_func("x")["context"])
+        assert "CITATIONS_JSON: " in tool_out
+        assert json.loads(tool_out.rsplit("CITATIONS_JSON: ", 1)[1])[0]["chunk_id"] == (
+            "handbook-p1-c1"
+        )
