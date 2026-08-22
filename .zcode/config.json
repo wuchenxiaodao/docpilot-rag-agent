@@ -1,0 +1,47 @@
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "process",
+              "command": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+              "args": ["${CLAUDE_PROJECT_DIR}/scripts/hooks/snapshot_before_edit.sh"],
+              "timeoutMs": 30000,
+              "statusMessage": "检查是否需要快照提交"
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "process",
+              "command": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+              "args": ["${CLAUDE_PROJECT_DIR}/scripts/hooks/push_unpushed.sh"],
+              "timeoutMs": 60000,
+              "statusMessage": "推送已提交的工作到 GitHub"
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "process",
+              "command": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+              "args": ["${CLAUDE_PROJECT_DIR}/scripts/hooks/inject_workflow_reminder.sh"],
+              "timeoutMs": 10000,
+              "statusMessage": "注入 Git 工作约定"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
