@@ -13,7 +13,9 @@ import sys
 
 import pytest
 
-REAL_DB_PATH = "./chroma_db_qwen3_semantic_chunks"
+# 锚定对象是 v2 库（10 文档 / 56 chunk，评测与 .env 使用的同一个库）。
+# v1 旧库已删除；测试内显式 setenv，避免依赖 shell 环境或代码默认值。
+REAL_DB_PATH = "./chroma_db_qwen3_semantic_chunks_v2"
 
 
 def _load_tools_module():
@@ -43,10 +45,11 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_real_chroma_metadata_contains_chunk_id():
+def test_real_chroma_metadata_contains_chunk_id(monkeypatch):
     """锚定假设：真实库每个片段的 metadata 都带非空 chunk_id 和 source。"""
     # 真实定义位置：src/agents/tools.py（load_chroma_db，已 grep 确认）
     load_chroma_db = _load_tools_module().load_chroma_db
+    monkeypatch.setenv("CHROMA_DB_PATH", REAL_DB_PATH)
     retriever = load_chroma_db()
     documents = retriever.invoke("DocPilot 的部署方式")
 

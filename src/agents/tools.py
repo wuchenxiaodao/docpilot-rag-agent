@@ -142,7 +142,7 @@ def _get_embedding_model_path() -> str:
 
 
 def _get_chroma_db_path() -> str:
-    return os.environ.get("CHROMA_DB_PATH", "./chroma_db_qwen3_semantic_chunks")
+    return os.environ.get("CHROMA_DB_PATH", "./chroma_db_qwen3_semantic_chunks_v2")
 
 
 # 嵌入模型加载进 CUDA 需数秒，不能每次检索都重建；按 (库路径, 模型路径)

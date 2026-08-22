@@ -24,7 +24,14 @@ import os
 import sys
 from datetime import datetime
 
+from dotenv import load_dotenv
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# tools.py 直接读 os.environ（不走 pydantic Settings），必须先把仓库 .env
+# 装进环境变量，否则 CHROMA_DB_PATH 会静默落回代码默认值（v1 旧库）。
+# load_dotenv 不覆盖已有变量：显式设置的 shell 环境变量仍然优先。
+load_dotenv(os.path.join(REPO_ROOT, ".env"))
 
 METRIC_TYPES = ("in_corpus", "multi_hop")
 
