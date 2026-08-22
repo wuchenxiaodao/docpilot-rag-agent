@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import json
 import logging
@@ -7,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -23,6 +24,7 @@ from langsmith import Client as LangsmithClient
 from langsmith import uuid7
 
 from agents import DEFAULT_AGENT, AgentGraph, get_agent, get_all_agent_info, load_agent
+from agents.ingestion import MAX_UPLOAD_BYTES, SUPPORTED_EXTENSIONS, ingest_file
 from core import settings
 from memory import initialize_database, initialize_store
 from schema import (
@@ -31,6 +33,7 @@ from schema import (
     ChatMessage,
     Feedback,
     FeedbackResponse,
+    IngestResponse,
     ServiceMetadata,
     StreamInput,
     UserInput,
@@ -378,6 +381,40 @@ async def stream(user_input: StreamInput, agent_id: str = DEFAULT_AGENT) -> Stre
     return StreamingResponse(
         message_generator(user_input, agent_id),
         media_type="text/event-stream",
+    )
+
+
+@router.post("/ingest", operation_id="ingest_document")
+async def ingest_document(file: Annotated[UploadFile, File(description="PDF or DOCX to index")]) -> IngestResponse:
+    """
+    Upload a PDF/DOCX into the DocPilot knowledge base.
+
+    The file is chunked, embedded and written to the configured Chroma DB.
+    Re-uploading a file with the same name replaces its previous chunks.
+    """
+    filename = file.filename or ""
+    if not filename.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type. Supported: {sorted(SUPPORTED_EXTENSIONS)}",
+        )
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB).",
+        )
+
+    try:
+        # 嵌入是阻塞的 GPU/CPU 工作，放线程池避免卡住事件循环
+        result = await asyncio.to_thread(ingest_file, filename, content)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return IngestResponse(
+        filename=result.filename,
+        chunks_added=result.chunks_added,
+        chunks_deleted=result.chunks_deleted,
     )
 
 

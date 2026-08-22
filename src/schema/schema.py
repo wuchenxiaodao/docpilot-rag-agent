@@ -162,6 +162,17 @@ class FeedbackResponse(BaseModel):
     status: Literal["success"] = "success"
 
 
+class IngestResponse(BaseModel):
+    """Result of ingesting an uploaded document into the knowledge base."""
+
+    status: Literal["success"] = "success"
+    filename: str = Field(description="Normalized source filename stored in metadata.")
+    chunks_added: int = Field(description="Number of chunks written.")
+    chunks_deleted: int = Field(
+        description="Number of previous chunks of the same source replaced.", default=0
+    )
+
+
 class ChatHistoryInput(BaseModel):
     """Input for retrieving chat history."""
 

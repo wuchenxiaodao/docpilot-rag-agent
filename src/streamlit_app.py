@@ -139,6 +139,33 @@ async def main() -> None:
                 del st.session_state.last_audio
             st.rerun()
 
+        # Upload PDF/DOCX into the DocPilot knowledge base (rag-assistant only)
+        if agent_client.agent == "rag-assistant":
+            uploaded = st.file_uploader(
+                "Add a document to the knowledge base",
+                type=["pdf", "docx"],
+                help="PDF/DOCX is chunked, embedded and indexed on upload; "
+                "re-uploading the same filename replaces its chunks.",
+            )
+            if uploaded is not None:
+                content = uploaded.getvalue()
+                size_mb = len(content) / (1024 * 1024)
+                if st.button(f":material/upload: Index “{uploaded.name}” ({size_mb:.1f} MB)"):
+                    try:
+                        with st.spinner(f"Indexing {uploaded.name}..."):
+                            result = await agent_client.aingest(uploaded.name, content)
+                        st.success(
+                            f"Indexed **{result['filename']}**: "
+                            f"{result['chunks_added']} chunks added"
+                            + (
+                                f" (replaced {result['chunks_deleted']} old chunks)"
+                                if result.get("chunks_deleted")
+                                else ""
+                            )
+                        )
+                    except AgentClientError as e:
+                        st.error(f"Failed to index document: {e}")
+
         with st.popover(":material/settings: Settings", use_container_width=True):
             model_idx = agent_client.info.models.index(agent_client.info.default_model)
             model = st.selectbox("LLM to use", options=agent_client.info.models, index=model_idx)

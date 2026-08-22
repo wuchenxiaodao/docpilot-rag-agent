@@ -430,3 +430,45 @@ def test_info(test_client, mock_settings) -> None:
 
     assert output.default_model == OpenAIModelName.GPT_5_NANO
     assert output.models == [OpenAIModelName.GPT_5_MINI, OpenAIModelName.GPT_5_NANO]
+
+
+def test_ingest_document(test_client, mock_settings) -> None:
+    """POST /ingest accepts a PDF and returns the ingestion summary."""
+    from agents.ingestion import IngestResult
+
+    mock_settings.AUTH_SECRET = None
+
+    pdf_bytes = b"%PDF-1.4 fake bytes"
+    with patch("service.service.ingest_file") as mock_ingest:
+        mock_ingest.return_value = IngestResult(
+            filename="handbook.pdf", chunks_added=3, chunks_deleted=2
+        )
+        response = test_client.post(
+            "/ingest", files={"file": ("handbook.pdf", pdf_bytes, "application/pdf")}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["filename"] == "handbook.pdf"
+    assert body["chunks_added"] == 3
+    assert body["chunks_deleted"] == 2
+
+
+def test_ingest_document_rejects_unsupported_type(test_client, mock_settings) -> None:
+    mock_settings.AUTH_SECRET = None
+    response = test_client.post(
+        "/ingest", files={"file": ("notes.txt", b"hello", "text/plain")}
+    )
+    assert response.status_code == 415
+
+
+def test_ingest_document_propagates_value_error(test_client, mock_settings) -> None:
+    """E.g. a PDF with no extractable text becomes a 400, not a 500."""
+    mock_settings.AUTH_SECRET = None
+    with patch("service.service.ingest_file") as mock_ingest:
+        mock_ingest.side_effect = ValueError("No text content extracted from file.")
+        response = test_client.post(
+            "/ingest", files={"file": ("empty.pdf", b"%PDF-1.4", "application/pdf")}
+        )
+    assert response.status_code == 400

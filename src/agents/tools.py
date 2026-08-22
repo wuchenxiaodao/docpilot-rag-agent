@@ -147,39 +147,46 @@ def _get_chroma_db_path() -> str:
 
 # 嵌入模型加载进 CUDA 需数秒，不能每次检索都重建；按 (库路径, 模型路径)
 # 缓存。换环境变量（测试场景）会得到新实例，路径解析语义不变。
-_retriever_cache: dict[tuple[str, str], object] = {}
-_retriever_cache_lock = threading.Lock()
+_chroma_cache: dict[tuple[str, str], Chroma] = {}
+_chroma_cache_lock = threading.Lock()
 
 
-def load_chroma_db():
+def _build_embeddings(model_path: str) -> HuggingFaceEmbeddings:
+    try:
+        return HuggingFaceEmbeddings(
+            model_name=model_path,
+            model_kwargs={"device": "cuda"},
+            encode_kwargs={"normalize_embeddings": True},
+            query_encode_kwargs={
+                "normalize_embeddings": True,
+                "prompt_name": "query",
+            },
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to initialize HuggingFaceEmbeddings with model at {model_path}."
+        ) from e
+
+
+def get_chroma_store() -> Chroma:
+    """返回当前配置下的 Chroma 向量库句柄（缓存实例），检索与入库共用。"""
     model_path = _get_embedding_model_path()
     db_path = _get_chroma_db_path()
     key = (db_path, model_path)
 
-    with _retriever_cache_lock:
-        retriever = _retriever_cache.get(key)
-        if retriever is not None:
-            return retriever
-
-        try:
-            embeddings = HuggingFaceEmbeddings(
-                model_name=model_path,
-                model_kwargs={"device": "cuda"},
-                encode_kwargs={"normalize_embeddings": True},
-                query_encode_kwargs={
-                    "normalize_embeddings": True,
-                    "prompt_name": "query",
-                },
+    with _chroma_cache_lock:
+        store = _chroma_cache.get(key)
+        if store is None:
+            store = Chroma(
+                persist_directory=db_path,
+                embedding_function=_build_embeddings(model_path),
             )
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to initialize HuggingFaceEmbeddings with model at {model_path}."
-            ) from e
+            _chroma_cache[key] = store
+        return store
 
-        chroma_db = Chroma(persist_directory=db_path, embedding_function=embeddings)
-        retriever = chroma_db.as_retriever(search_kwargs={"k": 3})
-        _retriever_cache[key] = retriever
-        return retriever
+
+def load_chroma_db():
+    return get_chroma_store().as_retriever(search_kwargs={"k": 3})
 
 
 def database_search_func(query: str) -> SearchResult:
