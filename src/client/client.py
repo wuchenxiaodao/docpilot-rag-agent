@@ -58,6 +58,25 @@ class AgentClient:
             headers["Authorization"] = f"Bearer {self.auth_secret}"
         return headers
 
+    def list_threads(self, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        List conversation threads from the agent service, newest first.
+
+        Returns a list of ThreadInfo dicts: thread_id, updated_at, preview,
+        message_count.
+        """
+        try:
+            response = httpx.get(
+                f"{self.base_url}/threads",
+                params={"limit": limit},
+                headers=self._headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise AgentClientError(f"Error listing threads: {e}")
+        return response.json()
+
     def retrieve_info(self) -> None:
         try:
             response = httpx.get(

@@ -2,13 +2,23 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -26,6 +36,7 @@ from langsmith import uuid7
 from agents import DEFAULT_AGENT, AgentGraph, get_agent, get_all_agent_info, load_agent
 from agents.ingestion import MAX_UPLOAD_BYTES, SUPPORTED_EXTENSIONS, ingest_file
 from core import settings
+from core.settings import DatabaseType
 from memory import initialize_database, initialize_store
 from schema import (
     ChatHistory,
@@ -36,6 +47,7 @@ from schema import (
     IngestResponse,
     ServiceMetadata,
     StreamInput,
+    ThreadInfo,
     UserInput,
 )
 from service.agui import router as agui_router
@@ -436,6 +448,76 @@ async def feedback(feedback: Feedback) -> FeedbackResponse:
         **kwargs,
     )
     return FeedbackResponse()
+
+
+async def _recent_thread_ids_sqlite(limit: int) -> list[str]:
+    """按写入新旧枚举 thread_id（sqlite 实现）。
+
+    AsyncSqliteSaver 不支持无 thread_id 的跨线程 alist（langgraph 内部
+    search_where 直接 KeyError），所以直接只读查询 checkpoints 表：
+    rowid 顺序即写入顺序，MAX(rowid) 就是各线程的最新写入。
+    """
+    import aiosqlite
+
+    db_path = settings.SQLITE_DB_PATH
+    if not os.path.exists(db_path):
+        return []
+    async with aiosqlite.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        async with conn.execute(
+            "SELECT thread_id FROM checkpoints GROUP BY thread_id "
+            "ORDER BY MAX(rowid) DESC LIMIT ?",
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [r[0] for r in rows]
+
+
+@router.get("/threads", operation_id="list_threads", response_model=list[ThreadInfo])
+async def list_threads(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> list[ThreadInfo]:
+    """
+    List conversation threads, newest first (latest checkpoint per thread).
+
+    All agents share one checkpointer, so threads are not attributed to a
+    specific agent. user_id is not persisted in checkpoints, so per-user
+    filtering is not available yet (see roadmap item 10: user accounts).
+    """
+    agent: AgentGraph = get_agent(DEFAULT_AGENT)
+    checkpointer = getattr(agent, "checkpointer", None)
+    if checkpointer is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Checkpointer not initialized",
+        )
+    if settings.DATABASE_TYPE != DatabaseType.SQLITE:
+        # postgres saver 支持无 thread_id 的 alist，尚未实现；先按部署形态收边界
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Thread listing is currently supported for the sqlite checkpointer only",
+        )
+
+    thread_ids = await _recent_thread_ids_sqlite(limit)
+
+    threads: list[ThreadInfo] = []
+    for tid in thread_ids:
+        tup = await checkpointer.aget_tuple({"configurable": {"thread_id": tid}})
+        if tup is None:
+            continue
+        checkpoint = tup.checkpoint or {}
+        messages = checkpoint.get("channel_values", {}).get("messages", [])
+        preview = ""
+        for m in messages:
+            if getattr(m, "type", "") == "human":
+                preview = str(m.content)[:80]
+                break
+        threads.append(
+            ThreadInfo(
+                thread_id=tid,
+                updated_at=str(checkpoint.get("ts", "")) or None,
+                preview=preview,
+                message_count=len(messages),
+            )
+        )
+    return threads
 
 
 @router.post("/{agent_id}/history", operation_id="history_with_agent_id")

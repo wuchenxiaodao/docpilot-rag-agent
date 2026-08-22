@@ -472,3 +472,87 @@ def test_ingest_document_propagates_value_error(test_client, mock_settings) -> N
             "/ingest", files={"file": ("empty.pdf", b"%PDF-1.4", "application/pdf")}
         )
     assert response.status_code == 400
+
+
+def _fake_saver(checkpoints_by_thread: dict):
+    """Fake checkpointer exposing aget_tuple over per-thread checkpoint dicts."""
+
+    async def aget_tuple(config):
+        from types import SimpleNamespace
+
+        tid = config["configurable"]["thread_id"]
+        cp = checkpoints_by_thread.get(tid)
+        if cp is None:
+            return None
+        return SimpleNamespace(
+            config={"configurable": {"thread_id": tid}}, checkpoint=cp, metadata={}
+        )
+
+    from types import SimpleNamespace
+
+    return SimpleNamespace(aget_tuple=aget_tuple)
+
+
+def test_list_threads(test_client, mock_settings, mock_agent) -> None:
+    """GET /threads returns threads in recency order with preview from first human msg."""
+    from core.settings import DatabaseType
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    mock_settings.AUTH_SECRET = None
+    mock_settings.DATABASE_TYPE = DatabaseType.SQLITE
+    mock_agent.checkpointer = _fake_saver(
+        {
+            "t-new": {
+                "ts": "2026-08-23T09:05:00+00:00",
+                "channel_values": {"messages": [HumanMessage("q"), AIMessage("a")]},
+            },
+            "t-old": {
+                "ts": "2026-08-20T10:00:00+00:00",
+                "channel_values": {"messages": [HumanMessage("older question")]},
+            },
+        }
+    )
+
+    with patch(
+        "service.service._recent_thread_ids_sqlite", new=AsyncMock(return_value=["t-new", "t-old"])
+    ):
+        response = test_client.get("/threads")
+
+    assert response.status_code == 200
+    threads = response.json()
+    assert [t["thread_id"] for t in threads] == ["t-new", "t-old"]
+    assert threads[0]["preview"] == "q"
+    assert threads[0]["message_count"] == 2
+    assert threads[0]["updated_at"] == "2026-08-23T09:05:00+00:00"
+    assert threads[1]["preview"] == "older question"
+
+
+def test_list_threads_skips_missing_checkpoint(test_client, mock_settings, mock_agent) -> None:
+    from core.settings import DatabaseType
+
+    mock_settings.AUTH_SECRET = None
+    mock_settings.DATABASE_TYPE = DatabaseType.SQLITE
+    mock_agent.checkpointer = _fake_saver({"t-real": {"ts": "x", "channel_values": {}}})
+
+    with patch(
+        "service.service._recent_thread_ids_sqlite",
+        new=AsyncMock(return_value=["t-gone", "t-real"]),
+    ):
+        response = test_client.get("/threads")
+
+    assert response.status_code == 200
+    assert [t["thread_id"] for t in response.json()] == ["t-real"]
+
+
+def test_list_threads_non_sqlite_unsupported(test_client, mock_settings, mock_agent) -> None:
+    mock_settings.AUTH_SECRET = None
+    mock_settings.DATABASE_TYPE = "postgres"
+    response = test_client.get("/threads")
+    assert response.status_code == 503
+
+
+def test_list_threads_no_checkpointer(test_client, mock_settings, mock_agent) -> None:
+    mock_settings.AUTH_SECRET = None
+    mock_agent.checkpointer = None
+    response = test_client.get("/threads")
+    assert response.status_code == 503

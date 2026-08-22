@@ -173,6 +173,17 @@ class IngestResponse(BaseModel):
     )
 
 
+class ThreadInfo(BaseModel):
+    """Summary of one conversation thread (latest checkpoint)."""
+
+    thread_id: str
+    updated_at: str | None = Field(
+        default=None, description="Timestamp of the latest checkpoint (ISO format)."
+    )
+    preview: str = Field(default="", description="First human message, trimmed.")
+    message_count: int = Field(default=0, description="Messages in the latest state.")
+
+
 class ChatHistoryInput(BaseModel):
     """Input for retrieving chat history."""
 

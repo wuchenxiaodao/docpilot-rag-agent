@@ -166,6 +166,35 @@ async def main() -> None:
                     except AgentClientError as e:
                         st.error(f"Failed to index document: {e}")
 
+        # Session history list: enumerate threads from the service and resume on click
+        with st.expander(":material/history: Chat history"):
+            col_refresh, _ = st.columns([1, 1.4])
+            if col_refresh.button("Refresh", use_container_width=True):
+                st.session_state.pop("thread_list", None)
+                st.rerun()
+            try:
+                if "thread_list" not in st.session_state:
+                    st.session_state.thread_list = agent_client.list_threads()
+            except AgentClientError as e:
+                st.caption(f"History unavailable: {e}")
+                st.session_state.thread_list = []
+            for t in st.session_state.thread_list[:20]:
+                is_current = t["thread_id"] == st.session_state.thread_id
+                label = (t.get("preview") or t["thread_id"][:8]) + (" ✅" if is_current else "")
+                if st.button(label, key=f"thread-{t['thread_id']}", use_container_width=True):
+                    st.session_state.thread_id = t["thread_id"]
+                    st.query_params["thread_id"] = t["thread_id"]
+                    try:
+                        st.session_state.messages = agent_client.get_history(
+                            thread_id=t["thread_id"], agent=agent_client.agent
+                        ).messages
+                    except AgentClientError:
+                        st.session_state.messages = []
+                        st.error("No message history found for this Thread ID.")
+                    if "last_audio" in st.session_state:
+                        del st.session_state.last_audio
+                    st.rerun()
+
         with st.popover(":material/settings: Settings", use_container_width=True):
             model_idx = agent_client.info.models.index(agent_client.info.default_model)
             model = st.selectbox("LLM to use", options=agent_client.info.models, index=model_idx)
