@@ -40,6 +40,22 @@ Generation model switched to local Qwen3.6; embeddings and the vector DB untouch
 > is **8/8 correct**. The single in_corpus miss (Q12) traces to the known retrieval
 > ranking defect documented in `evals/failure_analysis.md`, not to generation.
 
+### Retrieval quality improvements (roadmap #7 & #8)
+
+After the model swap, two retrieval-layer changes were tuned on the frozen 50-question eval (each item: implement → run eval → compare vs baseline → merge only if improved with no per-question regression):
+
+| Metric (35 scored) | Swap baseline | + #7 hybrid retrieval | + #8 multi-intent split |
+|---|---|---|---|
+| Recall@3 | 97.1% (34/35) | **100.0%** (35/35) | 100.0% (35/35) |
+| Recall@1 | 91.4% | 85.7% | **88.6%** |
+| MRR | 0.938 | 0.919 | **0.933** |
+| multi_hop full-coverage@3 | 7/10 | 8/10 | **9/10** |
+
+- **#7 — Hybrid retrieval (BM25 + vector, weighted RRF)**: a pure-Python BM25 index fused with the vector store via reciprocal-rank fusion (vector weight 1.0, BM25 weight 0.7, k=60). Rescues lexical hits buried by semantic similarity (Q12) and pushes multi-hop second chunks up (Q39). Corpus-adaptive stopwords (df > 0.8·N) keep common words from polluting scores. Reports: `evals/report_hybrid_bm25_w07.md`.
+- **#8 — Multi-intent query split**: detects compound questions of the form `"..., and <wh-word> ..."` and splits them into sub-queries, each fused independently then merged by round-robin interleave with dedup. A **pronoun guard** rejects splits where any sub-query contains a personal pronoun (anaphora — the referent lives in the other clause, so the sub-query retrieves too weakly to help; Q17 stays at 1/2 as a documented limitation needing LLM-based rewriting). Fixes Q39 (both expected chunks now surface) with zero regressions on the other 49 questions. Reports: `evals/report_multi_intent_pronoun_guard.md`.
+
+The remaining gap — Q17 ("...what should they do, and who should they contact?") — is an anaphora case: the pronoun "they" has no antecedent after splitting, so no heuristic merge can recover the second chunk. It is left to a future LLM-based query-rewrite step.
+
 **[🎥 Watch a video walkthrough of the repo and app](https://www.youtube.com/watch?v=pdYVHw_YCNY)**
 
 ## Overview

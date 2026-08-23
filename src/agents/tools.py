@@ -276,12 +276,85 @@ class _BM25Index:
         return [self._doc_ids[i] for s, i in scores[:k] if s > 0]
 
 
+# ---------------------------------------------------------------------------
+# 多意图拆分（roadmap #8）：检测「, and <疑问词>」结构的复合问题，
+# 拆成子查询分别融合、round-robin 交错合并，让每个意图各占一席。
+# 50 题实测：multi_hop 双 chunk 未齐的 Q39 是这种结构
+# （"what command regenerates the lockfile, and which environment variable..."），
+# 拆分后两个自包含子查询各命中一个期望 chunk。但 Q17 形态
+# （"...what should they do, and who should they contact?"）拆出的第二问
+# 含代词 "they"，失去前指后语义不完整、检索太弱，修不动。故加代词
+# 守卫：子查询含人称代词即拒绝拆分、走原单查询路径——保守但不退化。
+_MULTI_INTENT_SPLIT_RE = re.compile(
+    r",\s+and\s+(what|which|who|how|when|where|why)\b",
+    re.IGNORECASE,
+)
+
+# 人称代词集合。子查询含任一即视为语义不完整（前指丢失或口语化），
+# 拒绝拆分。实测：含代词的 Q17/Q35/Q36 拆分要么修不动要么退化，
+# 拒绝后保持基线、零风险。
+_ANAPHORA_PRONOUNS = frozenset(
+    {
+        "i", "me", "my", "mine", "myself",
+        "we", "us", "our", "ours", "ourselves",
+        "you", "your", "yours", "yourself", "yourselves",
+        "he", "him", "his", "himself",
+        "she", "her", "hers", "herself",
+        "it", "its", "itself",
+        "they", "them", "their", "theirs", "themselves",
+    }
+)
+
+
+def _split_query(query: str) -> list[str]:
+    """复合多意图问题拆分。返回子查询列表；单意图返回长度 1。
+
+    只在 `, and <疑问词>` 边界切分，且要求每个子查询：(a) 至少 4 个
+    长度≥2 的字母 token——挡掉形如 "and how?" 的退化第二问（Q23）；
+    (b) 不含人称代词——挡掉前指丢失的子查询（Q17 "...who should they
+    contact?"），这类子查询语义不完整、检索太弱，拆了也修不动反而可能
+    退化。子查询少于 2 个时返回 [原查询]。
+    """
+    q = query.strip()
+    matches = list(_MULTI_INTENT_SPLIT_RE.finditer(q))
+    if not matches:
+        return [q]
+
+    parts: list[str] = []
+    prev = 0
+    for m in matches:
+        head = q[prev : m.start()].strip()  # 连词之前的子句
+        if head:
+            parts.append(head)
+        prev = m.start(1)  # 疑问词位置：后续子句从疑问词起算
+    tail = q[prev:].strip()
+    if tail:
+        parts.append(tail)
+
+    def _word_count(s: str) -> int:
+        return len([t for t in re.findall(r"[A-Za-z]+", s) if len(t) >= 2])
+
+    def _has_pronoun(s: str) -> bool:
+        return any(tok in _ANAPHORA_PRONOUNS for tok in re.findall(r"[a-z]+", s.lower()))
+
+    valid = [p for p in parts if _word_count(p) >= 4 and len(p) >= 15 and not _has_pronoun(p)]
+    if len(valid) < 2:
+        return [q]
+    return valid
+
+
 class HybridRetriever:
     """向量 + BM25 的 RRF 融合检索器。
 
     duck-type 兼容原 Chroma retriever 的 invoke()/search_kwargs 接口
     （eval_retrieval.py 的 --k 依赖后者）。BM25 索引按库内条目数做
     廉价陈旧检查：在线入库/删除后自动重建。
+
+    多意图（roadmap #8）：复合问题先 _split_query 拆成子查询，每个子查询
+    独立融合后按 round-robin 交错合并并去重——保证每个意图至少贡献一个
+    席位，修 multi_hop 双 chunk 未齐（Q39）。代词守卫确保只对自包含子
+    查询触发拆分（Q38/Q39/Q40），含前指代词的（Q17/Q35/Q36）原样通过、
+    不退化。单意图问题走单查询路径，行为不变。
     """
 
     def __init__(
@@ -315,8 +388,8 @@ class HybridRetriever:
     def _cid(d: Document, fallback: str) -> str:
         return d.metadata.get("chunk_id") or fallback
 
-    def invoke(self, query: str) -> list[Document]:
-        k = int(self.search_kwargs.get("k", 3))
+    def _retrieve_one(self, query: str) -> tuple[list[str], dict[str, Document]]:
+        """单查询的向量+BM25 融合。返回 (按分降序的 chunk_id 列表, id→Document)。"""
         vector_hits = self._store.similarity_search(query, k=self._candidate_k)
         index = self._ensure_index()
         bm25_ids = index.search(query, self._candidate_k)
@@ -337,8 +410,40 @@ class HybridRetriever:
         for rank, cid in enumerate(bm25_ids):
             fused[cid] = fused.get(cid, 0.0) + self._bm25_weight / (self._rrf_k + rank + 1)
 
-        top = sorted(fused.items(), key=lambda kv: (-kv[1], kv[0]))[:k]
-        return [id_to_doc[cid] for cid, _ in top if cid in id_to_doc]
+        ranked = [cid for cid, _ in sorted(fused.items(), key=lambda kv: (-kv[1], kv[0]))]
+        return ranked, id_to_doc
+
+    def invoke(self, query: str) -> list[Document]:
+        k = int(self.search_kwargs.get("k", 3))
+        sub_queries = _split_query(query)
+
+        # 单意图：原融合路径，行为不变。
+        if len(sub_queries) == 1:
+            ranked, id_to_doc = self._retrieve_one(sub_queries[0])
+            return [id_to_doc[cid] for cid in ranked[:k] if cid in id_to_doc]
+
+        # 多意图：子查询各自融合，round-robin 交错合并并去重。
+        # 交错而非分数合并——多跳每个意图同等重要，不应让某一子查询
+        # 的高分压走另一意图的席位。代词守卫已保证此处触发的都是自包含
+        # 子查询（Q38/Q39/Q40 形态），故 round-robin 不会像 Q35 那样
+        # 挤掉原查询已命中的期望 chunk。
+        per_sub = [self._retrieve_one(sq) for sq in sub_queries]
+        all_id_to_doc: dict[str, Document] = {}
+        for _, id_map in per_sub:
+            all_id_to_doc.update(id_map)
+
+        merged: list[str] = []
+        seen: set[str] = set()
+        max_len = max((len(ranked) for ranked, _ in per_sub), default=0)
+        for i in range(max_len):
+            for ranked, _ in per_sub:
+                if i < len(ranked) and ranked[i] not in seen:
+                    seen.add(ranked[i])
+                    merged.append(ranked[i])
+            if len(merged) >= k:
+                break
+
+        return [all_id_to_doc[cid] for cid in merged[:k] if cid in all_id_to_doc]
 
 
 _retriever_cache: dict[tuple[str, str], HybridRetriever] = {}
