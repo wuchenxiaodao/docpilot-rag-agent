@@ -29,6 +29,11 @@ def mock_agent():
 def mock_settings(mock_env):
     """Fixture to ensure settings are clean for each test."""
     with patch("service.service.settings") as mock_settings:
+        # Defaults preserve pre-#10 behavior: open API, no rate limiting.
+        mock_settings.AUTH_SECRET = None
+        mock_settings.AUTH_API_KEYS_FILE = None
+        mock_settings.AUTH_API_KEYS_JSON = None
+        mock_settings.RATE_LIMIT_PER_MIN = 0
         yield mock_settings
 
 

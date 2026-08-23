@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     LOG_LEVEL: LogLevel = LogLevel.WARNING
 
     AUTH_SECRET: SecretStr | None = None
+    # Per-user API keys (roadmap #10). Either an inline JSON string or a path to a
+    # gitignored JSON file mapping keys to {"user_id": ..., "label": ...} (or the
+    # shorthand "<key>": "<user_id>"). Empty/absent => AUTH_SECRET-only / anonymous.
+    AUTH_API_KEYS_FILE: str | None = None
+    AUTH_API_KEYS_JSON: str | None = None
+    # Requests per minute per caller (api-key user id, else client IP). 0 disables.
+    RATE_LIMIT_PER_MIN: int = 0
 
     OPENAI_API_KEY: SecretStr | None = None
     DEEPSEEK_API_KEY: SecretStr | None = None

@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to api_keys.json (gitignored), fill in real keys, set AUTH_API_KEYS_FILE=./api_keys.json in .env. NEVER commit the real file.",
+  "alice-key": { "user_id": "alice", "label": "Alice" },
+  "bob-key": "bob",
+  "service-key": { "user_id": "svc", "label": "Automation service account" }
+}

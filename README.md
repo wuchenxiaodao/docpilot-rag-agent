@@ -56,6 +56,16 @@ After the model swap, two retrieval-layer changes were tuned on the frozen 50-qu
 
 The remaining gap — Q17 ("...what should they do, and who should they contact?") — is an anaphora case: the pronoun "they" has no antecedent after splitting, so no heuristic merge can recover the second chunk. It is left to a future LLM-based query-rewrite step.
 
+### API hardening: users + rate limiting (roadmap #10)
+
+The service shipped with a single optional bearer secret (`AUTH_SECRET`) and no rate limiting. #10 adds named users and per-caller throttling, **fully backward compatible** (no new dependencies):
+
+- **Per-user API keys** (`AUTH_API_KEYS_FILE` / `AUTH_API_KEYS_JSON`): a gitignored JSON file (see [api_keys.json.example](api_keys.json.example)) maps each key to a `user_id`. The server **pins** that `user_id` to the request, so a client cannot impersonate another user. The shared `AUTH_SECRET` still works as a fallback mapped to user `"default"`; when neither is configured the API stays open (anonymous) exactly as before.
+- **Fixed-window rate limiting** (`RATE_LIMIT_PER_MIN`, default `0` = off): in-memory, per caller — keyed by api-key `user_id` when authenticated, else client IP. Applied to the costly endpoints (`/invoke`, `/stream`, `/ingest`); over-limit requests get `429` with a `Retry-After` header. Denied requests don't consume a slot, so a client hammering the limit can't extend the window.
+- **Scope**: single-process (suits the stock uvicorn deploy). Multi-worker deployments would need a shared store (Redis) — intentionally left out to respect the no-new-dependency constraint.
+
+See `.env.example` for all three settings. Tests: `tests/core/test_auth_logic.py`, `tests/core/test_ratelimit.py`, `tests/service/test_auth.py` (multi-user pin, file-loaded keys, 429, per-user isolation).
+
 **[🎥 Watch a video walkthrough of the repo and app](https://www.youtube.com/watch?v=pdYVHw_YCNY)**
 
 ## Overview

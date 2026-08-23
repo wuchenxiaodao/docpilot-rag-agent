@@ -24,7 +24,7 @@
 
 ## 阶段 3：能对外服务
 
-- [ ] 10. 用户体系 + 接口限流（当前仅一个可为空的 bearer token）
+- [x] 10. 用户体系 + 接口限流（2026-08-23 完成：`core/auth.py` 多用户 API key（JSON 文件/内联，按 mtime 缓存热重载）+ `core/ratelimit.py` 内存固定窗口限流；`verify_bearer` 解析为 `Principal` 挂 `request.state`，api-key 来源服务端钉 `user_id`（客户端不可冒充），共享 `AUTH_SECRET`/匿名仍走客户端 `user_id`（向后兼容）；`RATE_LIMIT_PER_MIN` 默认 0=关闭，命中 `/invoke`、`/stream`、`/ingest`，超限 429+Retry-After，被拒请求不占名额。无新依赖。224 测试通过（+21 新增，零退化）。详见 README「API hardening」节）
 - [ ] 11. 输出侧内容审查 + 检索内容的提示注入防护（当前只查输入）
 - [ ] 12. 端到端生成质量评测（忠实度 / 引用正确性 / 拒答准确率，现有评测只覆盖检索层）
 

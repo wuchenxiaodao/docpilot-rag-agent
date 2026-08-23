@@ -16,12 +16,15 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from core.auth import Principal, load_api_keys, resolve_principal
+from core.ratelimit import rate_limiter
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -66,17 +69,83 @@ def custom_generate_unique_id(route: APIRoute) -> str:
     return route.name
 
 
+# Per-user API keys are read from a (gitignored) JSON file or inline env var and
+# cached so a request never re-reads the file. The cache key includes the file
+# mtime, so editing api_keys.json is picked up without a restart.
+_API_KEY_CACHE: tuple[tuple[str | None, float, str | None], dict[str, Principal]] | None = None
+
+
+def _get_api_keys() -> dict[str, Principal]:
+    """Load and cache the per-user API-key store from settings."""
+    global _API_KEY_CACHE
+    path = settings.AUTH_API_KEYS_FILE
+    json_str = settings.AUTH_API_KEYS_JSON
+    mtime: float | None = None
+    if path:
+        try:
+            mtime = float(os.path.getmtime(path))
+        except OSError:
+            mtime = -1.0
+    cache_key = (path, mtime if mtime is not None else 0.0, json_str)
+    if _API_KEY_CACHE is not None and _API_KEY_CACHE[0] == cache_key:
+        return _API_KEY_CACHE[1]
+    store = load_api_keys(path, json_str)
+    _API_KEY_CACHE = (cache_key, store)
+    return store
+
+
 def verify_bearer(
+    request: Request,
     http_auth: Annotated[
         HTTPAuthorizationCredentials | None,
-        Depends(HTTPBearer(description="Please provide AUTH_SECRET api key.", auto_error=False)),
+        Depends(HTTPBearer(description="Please provide AUTH_SECRET or API key.", auto_error=False)),
     ],
 ) -> None:
-    if not settings.AUTH_SECRET:
-        return
-    auth_secret = settings.AUTH_SECRET.get_secret_value()
-    if not http_auth or http_auth.credentials != auth_secret:
+    """Resolve the caller to a Principal and stash it on the request.
+
+    Backward compatible: with neither AUTH_SECRET nor API keys configured every
+    request is anonymous (no 401). With AUTH_SECRET only, the shared secret
+    authenticates the request but does not pin a user id (clients keep
+    supplying their own, as before). With API keys, the key identifies a user
+    whose id the server pins downstream.
+    """
+    auth_secret = settings.AUTH_SECRET.get_secret_value() if settings.AUTH_SECRET else None
+    api_keys = _get_api_keys()
+    token = http_auth.credentials if http_auth else None
+    principal = resolve_principal(token, api_keys, auth_secret)
+    if principal is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    request.state.principal = principal
+
+
+def _rate_key(principal: Principal | None, request: Request) -> str:
+    """Bucket key for rate limiting: per-user id when identified, else client IP."""
+    if principal is not None and principal.source == "api_key":
+        return f"u:{principal.user_id}"
+    # X-Forwarded-For left to a reverse proxy; behind bare uvicorn use the peer.
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return f"ip:{forwarded.split(',')[0].strip()}"
+    client = request.client
+    return f"ip:{client.host if client else 'unknown'}"
+
+
+def rate_limit(
+    request: Request,
+) -> None:
+    """Fixed-window per-caller limiter. No-op when RATE_LIMIT_PER_MIN is 0."""
+    limit = int(settings.RATE_LIMIT_PER_MIN or 0)
+    if limit <= 0:
+        return
+    principal = getattr(request.state, "principal", None)
+    key = _rate_key(principal, request)
+    allowed, retry_after = rate_limiter.check(key, limit, window_sec=60.0)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Try again shortly.",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 @asynccontextmanager
@@ -95,10 +164,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if hasattr(store, "setup"):  # ignore: union-attr
                 await store.setup()
 
-            if not settings.AUTH_SECRET:
+            if not settings.AUTH_SECRET and not _get_api_keys():
                 logger.warning(
-                    "AUTH_SECRET is not configured — all API endpoints are unauthenticated. "
-                    "Set AUTH_SECRET in your environment to enable bearer token authentication."
+                    "AUTH_SECRET is not configured and no API keys are loaded — all API "
+                    "endpoints are unauthenticated. Set AUTH_SECRET (or AUTH_API_KEYS) in "
+                    "your environment to enable authentication."
                 )
 
             # Configure agents with both memory components and async loading
@@ -140,14 +210,26 @@ async def info() -> ServiceMetadata:
     )
 
 
-async def _handle_input(user_input: UserInput, agent: AgentGraph) -> tuple[dict[str, Any], UUID]:
+async def _handle_input(
+    user_input: UserInput,
+    agent: AgentGraph,
+    principal: Principal | None = None,
+) -> tuple[dict[str, Any], UUID]:
     """
     Parse user input and handle any required interrupt resumption.
     Returns kwargs for agent invocation and the run_id.
+
+    When the caller authenticated with a per-user API key, the server pins
+    ``user_id`` to that principal's id so a client cannot impersonate another
+    user. The shared-secret and anonymous modes keep honoring the client's
+    ``user_id`` (prior behavior), since the secret does not identify a user.
     """
     run_id = uuid7()
     thread_id = user_input.thread_id or str(uuid4())
-    user_id = user_input.user_id or str(uuid4())
+    if principal is not None and principal.is_identified:
+        user_id = principal.user_id
+    else:
+        user_id = user_input.user_id or str(uuid4())
 
     configurable = {"thread_id": thread_id, "user_id": user_id}
     if user_input.model is not None:
@@ -197,9 +279,17 @@ async def _handle_input(user_input: UserInput, agent: AgentGraph) -> tuple[dict[
     return kwargs, run_id
 
 
-@router.post("/{agent_id}/invoke", operation_id="invoke_with_agent_id")
-@router.post("/invoke")
-async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMessage:
+@router.post(
+    "/{agent_id}/invoke",
+    operation_id="invoke_with_agent_id",
+    dependencies=[Depends(rate_limit)],
+)
+@router.post("/invoke", dependencies=[Depends(rate_limit)])
+async def invoke(
+    request: Request,
+    user_input: UserInput,
+    agent_id: str = DEFAULT_AGENT,
+) -> ChatMessage:
     """
     Invoke an agent with user input to retrieve a final response.
 
@@ -207,6 +297,8 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
     Use thread_id to persist and continue a multi-turn conversation. run_id kwarg
     is also attached to messages for recording feedback.
     Use user_id to persist and continue a conversation across multiple threads.
+    When authenticated with a per-user API key, the server overrides user_id
+    with the caller's identity.
     """
     # NOTE: Currently this only returns the last message or interrupt.
     # In the case of an agent outputting multiple AIMessages (such as the background step
@@ -214,7 +306,8 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
     # you'd want to include it. You could update the API to return a list of ChatMessages
     # in that case.
     agent: AgentGraph = get_agent(agent_id)
-    kwargs, run_id = await _handle_input(user_input, agent)
+    principal = getattr(request.state, "principal", None)
+    kwargs, run_id = await _handle_input(user_input, agent, principal)
 
     try:
         response_events: list[tuple[str, Any]] = await agent.ainvoke(**kwargs, stream_mode=["updates", "values"])  # type: ignore # fmt: skip
@@ -239,7 +332,9 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
 
 
 async def message_generator(
-    user_input: StreamInput, agent_id: str = DEFAULT_AGENT
+    user_input: StreamInput,
+    agent_id: str = DEFAULT_AGENT,
+    principal: Principal | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Generate a stream of messages from the agent.
@@ -247,7 +342,7 @@ async def message_generator(
     This is the workhorse method for the /stream endpoint.
     """
     agent: AgentGraph = get_agent(agent_id)
-    kwargs, run_id = await _handle_input(user_input, agent)
+    kwargs, run_id = await _handle_input(user_input, agent, principal)
 
     try:
         # Process streamed events from the graph and yield messages over the SSE stream.
@@ -377,9 +472,19 @@ def _sse_response_example() -> dict[int | str, Any]:
     response_class=StreamingResponse,
     responses=_sse_response_example(),
     operation_id="stream_with_agent_id",
+    dependencies=[Depends(rate_limit)],
 )
-@router.post("/stream", response_class=StreamingResponse, responses=_sse_response_example())
-async def stream(user_input: StreamInput, agent_id: str = DEFAULT_AGENT) -> StreamingResponse:
+@router.post(
+    "/stream",
+    response_class=StreamingResponse,
+    responses=_sse_response_example(),
+    dependencies=[Depends(rate_limit)],
+)
+async def stream(
+    request: Request,
+    user_input: StreamInput,
+    agent_id: str = DEFAULT_AGENT,
+) -> StreamingResponse:
     """
     Stream an agent's response to a user input, including intermediate messages and tokens.
 
@@ -387,16 +492,19 @@ async def stream(user_input: StreamInput, agent_id: str = DEFAULT_AGENT) -> Stre
     Use thread_id to persist and continue a multi-turn conversation. run_id kwarg
     is also attached to all messages for recording feedback.
     Use user_id to persist and continue a conversation across multiple threads.
+    When authenticated with a per-user API key, the server overrides user_id
+    with the caller's identity.
 
     Set `stream_tokens=false` to return intermediate messages but not token-by-token.
     """
+    principal = getattr(request.state, "principal", None)
     return StreamingResponse(
-        message_generator(user_input, agent_id),
+        message_generator(user_input, agent_id, principal),
         media_type="text/event-stream",
     )
 
 
-@router.post("/ingest", operation_id="ingest_document")
+@router.post("/ingest", operation_id="ingest_document", dependencies=[Depends(rate_limit)])
 async def ingest_document(file: Annotated[UploadFile, File(description="PDF or DOCX to index")]) -> IngestResponse:
     """
     Upload a PDF/DOCX into the DocPilot knowledge base.
