@@ -11,6 +11,35 @@ It includes a [LangGraph](https://langchain-ai.github.io/langgraph/) agent, a [F
 
 This project offers a template for you to easily build and run your own agents using the LangGraph framework. It demonstrates a complete setup from agent definition to user interface, making it easier to get started with LangGraph-based projects by providing a full, robust toolkit.
 
+## Tech Stack (DocPilot)
+
+| Component | Technology |
+|---|---|
+| Generation model (LLM) | **Qwen3.6** — `qwen3.6:35b-a3b` (MoE), served locally by [Ollama](https://ollama.com) over its OpenAI-compatible endpoint (`COMPATIBLE_*` config) |
+| Embeddings | **Qwen3-Embedding-0.6B** (local, CUDA) — unchanged since the v2 corpus build |
+| Vector store | ChromaDB — v2 semantic-chunk corpus (10 docs / 56 chunks) |
+| Agent runtime | LangGraph + FastAPI + Streamlit |
+
+### Model swap regression (2026-08-23)
+
+Generation model switched to local Qwen3.6; embeddings and the vector DB untouched, so retrieval is expected to be byte-identical to the frozen 50-question baseline (verified). Refusal accuracy is measured for the first time on the new model — the previous hosted model has no recorded answer-level baseline (N/A).
+
+| Metric | Before (hosted model) | After (local Qwen3.6 35b-a3b) |
+|---|---|---|
+| Recall@1 (35 scored) | 91.4% | 91.4% (identical) |
+| Recall@3 | 97.1% | 97.1% (identical) |
+| MRR | 0.938 | 0.938 (identical) |
+| Refusal accuracy, out_corpus (15 q) | N/A | 53.3% (8/15) — see note |
+| Answer rate, in_corpus sample (10 q) | N/A | 90.0% (9/10) |
+
+> **Note on refusal accuracy**: the `out_corpus` labels were authored against the v1
+> corpus (AcmeTech handbook only). The v2 corpus added the repo's own docs, so several
+> "out-of-corpus" questions are now genuinely answerable from indexed content — the
+> model correctly answers them (e.g. VertexAI setup, chunk-size config). On questions
+> that are truly outside the corpus (cookie recipes, stock ticker, CEO, HQ), refusal
+> is **8/8 correct**. The single in_corpus miss (Q12) traces to the known retrieval
+> ranking defect documented in `evals/failure_analysis.md`, not to generation.
+
 **[🎥 Watch a video walkthrough of the repo and app](https://www.youtube.com/watch?v=pdYVHw_YCNY)**
 
 ## Overview

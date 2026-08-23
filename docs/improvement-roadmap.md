@@ -5,7 +5,7 @@
 
 ## 阶段 0：先能真跑（小改动，先做）
 
-- [ ] 1. 关闭 `.env` 中 `USE_FAKE_MODEL=true`，接入真实 LLM（待模型切换方案确认：Qwen3.6 本地 Ollama，本机尚未安装）
+- [x] 1. 关闭 `.env` 中 `USE_FAKE_MODEL=true`，接入真实 LLM（2026-08-23 完成：Qwen3.6 35b-a3b 本地 Ollama，OpenAI 兼容端点；8GB 显存机用 gpu12 变体固定 12 层 GPU offload；检索回归逐字一致，拒答评测 8/8 真·库外全对，见 README 对比表。阶段 0 至此全部完成）
 - [x] 2. 嵌入模型 / Chroma 检索器改为单例，消除每次检索的模型加载开销（2026-08-22 完成：按 (库路径, 模型路径) 缓存，环境变量变更仍生效）
 - [x] 3. `DEFAULT_AGENT` 从 `research-assistant` 改为 `rag-assistant`（2026-08-22 完成：同步更新 test_info 断言期望值）
 - [x] 13. 钉住 `CHROMA_DB_PATH`（v2 库）与 `EMBEDDING_MODEL_PATH` 到 `.env`，避免代码默认值静默指向 v1 旧库（2026-08-22 完成；`.env.example` 已补文档，废弃库目录 v1/test 待确认后清理）
