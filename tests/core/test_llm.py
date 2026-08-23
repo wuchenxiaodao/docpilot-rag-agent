@@ -82,6 +82,9 @@ def test_get_model_ollama():
 
 
 def test_get_model_openai_compatible():
+    # get_model 带 functools.cache：先清缓存，避免同进程早前调用（读真实 .env）
+    # 返回的实例让本测试的 patch 失效。
+    get_model.cache_clear()
     with (
         patch("core.settings.settings.COMPATIBLE_MODEL", "qwen3.6:35b-a3b"),
         patch("core.settings.settings.COMPATIBLE_BASE_URL", "http://localhost:11434/v1"),

@@ -3,10 +3,12 @@ import math
 import os
 import re
 import threading
+from collections import Counter
 from typing import Literal, TypedDict
 
 import numexpr
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_core.tools import BaseTool, tool
 from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -192,7 +194,154 @@ def get_chroma_store() -> Chroma:
 
 
 def load_chroma_db():
-    return get_chroma_store().as_retriever(search_kwargs={"k": 3})
+    model_path = _get_embedding_model_path()
+    db_path = _get_chroma_db_path()
+    key = (db_path, model_path)
+
+    # 注意不可持锁调用 get_chroma_store（非重入锁会死锁）：先查缓存，锁外建库
+    with _chroma_cache_lock:
+        retriever = _retriever_cache.get(key)
+    if retriever is not None:
+        return retriever
+    retriever = HybridRetriever(get_chroma_store())
+    with _chroma_cache_lock:
+        return _retriever_cache.setdefault(key, retriever)
+
+
+# ---------------------------------------------------------------------------
+# 混合检索：BM25 词面匹配 + 向量语义检索，RRF 融合。
+# 动机见 evals/failure_analysis.md 例1（Q12）：答案逐字在库内，却被
+# 「表层语义相近」的无关 chunk 压出 Top-k。BM25 提供词面精确匹配信号，
+# RRF（k=60 阻尼）对纯语义命中保持保守，不伤 paraphrase 类问题。
+_BM25_K1 = 1.5
+_BM25_B = 0.75
+_RRF_K = 60
+_CANDIDATE_K = 8
+# BM25 融合权重（向量恒为 1.0）。50 题扫参：0.6–0.8 为稳定平台，
+# Recall@3 达 100%（Q12 获救、Q39 升至第1），代价 Q17/Q32 从第1滑到第2；
+# ≥0.9 词面信号开始压过语义，R@1 崩塌（1.0 时 82.9%）。
+_BM25_WEIGHT = 0.7
+
+
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", str(text).lower())
+
+
+class _BM25Index:
+    """纯 Python BM25（k1=1.5, b=0.75）。当前语料 56 chunk，构建 <50ms。"""
+
+    def __init__(self, docs: list[Document]):
+        self._by_id: dict[str, Document] = {}
+        self._doc_tokens: list[list[str]] = []
+        self._doc_ids: list[str] = []
+        for i, d in enumerate(docs):
+            cid = d.metadata.get("chunk_id") or f"idx-{i}"
+            self._doc_ids.append(cid)
+            self._doc_tokens.append(_tokenize(d.page_content))
+            self._by_id[cid] = d
+        self._n = len(docs)
+        self._avgdl = sum(len(t) for t in self._doc_tokens) / max(1, self._n)
+        df: dict[str, int] = {}
+        for toks in self._doc_tokens:
+            for t in set(toks):
+                df[t] = df.get(t, 0) + 1
+        self._df = df
+        self._idf = {t: math.log((self._n - d + 0.5) / (d + 0.5) + 1) for t, d in df.items()}
+
+    def doc_by_id(self, cid: str) -> Document | None:
+        return self._by_id.get(cid)
+
+    def search(self, query: str, k: int) -> list[str]:
+        q_tokens = _tokenize(query)
+        # 语料自适应停用词：df 超过 80% 文档的词（the/and/to…）不参与打分，
+        # 否则它们给无关文档贡献微弱正分即可进榜，被融合放大。
+        stop = {t for t in q_tokens if self._df.get(t, 0) > 0.8 * self._n}
+        q_tokens = [t for t in q_tokens if t not in stop]
+        scores: list[tuple[float, int]] = []
+        for i, toks in enumerate(self._doc_tokens):
+            dl = len(toks)
+            tf = Counter(toks)
+            s = 0.0
+            for t in q_tokens:
+                f = tf.get(t)
+                if not f:
+                    continue
+                idf = self._idf.get(t)
+                if idf is None:
+                    continue
+                norm = _BM25_K1 * (1 - _BM25_B + _BM25_B * dl / max(1e-9, self._avgdl))
+                s += idf * f * (_BM25_K1 + 1) / (f + norm)
+            scores.append((s, i))
+        scores.sort(key=lambda x: (-x[0], x[1]))
+        return [self._doc_ids[i] for s, i in scores[:k] if s > 0]
+
+
+class HybridRetriever:
+    """向量 + BM25 的 RRF 融合检索器。
+
+    duck-type 兼容原 Chroma retriever 的 invoke()/search_kwargs 接口
+    （eval_retrieval.py 的 --k 依赖后者）。BM25 索引按库内条目数做
+    廉价陈旧检查：在线入库/删除后自动重建。
+    """
+
+    def __init__(
+        self,
+        store: Chroma,
+        rrf_k: int = _RRF_K,
+        candidate_k: int = _CANDIDATE_K,
+        bm25_weight: float = _BM25_WEIGHT,
+    ):
+        self._store = store
+        self.search_kwargs: dict = {"k": 3}
+        self._rrf_k = rrf_k
+        self._candidate_k = candidate_k
+        self._bm25_weight = bm25_weight
+        self._index: _BM25Index | None = None
+        self._index_count = -1
+
+    def _ensure_index(self) -> _BM25Index:
+        count = len(self._store.get()["ids"])
+        if self._index is None or count != self._index_count:
+            data = self._store.get(include=["documents", "metadatas"])
+            docs = [
+                Document(page_content=t, metadata=m or {})
+                for t, m in zip(data["documents"], data["metadatas"])
+            ]
+            self._index = _BM25Index(docs)
+            self._index_count = count
+        return self._index
+
+    @staticmethod
+    def _cid(d: Document, fallback: str) -> str:
+        return d.metadata.get("chunk_id") or fallback
+
+    def invoke(self, query: str) -> list[Document]:
+        k = int(self.search_kwargs.get("k", 3))
+        vector_hits = self._store.similarity_search(query, k=self._candidate_k)
+        index = self._ensure_index()
+        bm25_ids = index.search(query, self._candidate_k)
+
+        id_to_doc: dict[str, Document] = {}
+        for rank, d in enumerate(vector_hits):
+            id_to_doc[self._cid(d, f"vector-{rank}")] = d
+        for cid in bm25_ids:
+            if cid not in id_to_doc:
+                d = index.doc_by_id(cid)
+                if d is not None:
+                    id_to_doc[cid] = d
+
+        fused: dict[str, float] = {}
+        for rank, d in enumerate(vector_hits):
+            cid = self._cid(d, f"vector-{rank}")
+            fused[cid] = fused.get(cid, 0.0) + 1.0 / (self._rrf_k + rank + 1)
+        for rank, cid in enumerate(bm25_ids):
+            fused[cid] = fused.get(cid, 0.0) + self._bm25_weight / (self._rrf_k + rank + 1)
+
+        top = sorted(fused.items(), key=lambda kv: (-kv[1], kv[0]))[:k]
+        return [id_to_doc[cid] for cid, _ in top if cid in id_to_doc]
+
+
+_retriever_cache: dict[tuple[str, str], HybridRetriever] = {}
 
 
 def database_search_func(query: str) -> SearchResult:

@@ -17,7 +17,7 @@ This project offers a template for you to easily build and run your own agents u
 |---|---|
 | Generation model (LLM) | **Qwen3.6** — `qwen3.6:35b-a3b` (MoE), served locally by [Ollama](https://ollama.com) over its OpenAI-compatible endpoint (`COMPATIBLE_*` config) |
 | Embeddings | **Qwen3-Embedding-0.6B** (local, CUDA) — unchanged since the v2 corpus build |
-| Vector store | ChromaDB — v2 semantic-chunk corpus (10 docs / 56 chunks) |
+| Vector store | ChromaDB — v2 semantic-chunk corpus (10 docs / 56 chunks) + **hybrid retrieval** (BM25 + vector, weighted RRF w=0.7 — Recall@3 100% on the frozen eval) |
 | Agent runtime | LangGraph + FastAPI + Streamlit |
 
 ### Model swap regression (2026-08-23)
