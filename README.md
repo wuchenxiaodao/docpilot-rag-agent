@@ -83,6 +83,11 @@ docker compose watch
 
 ### Key Features
 
+1. **Local-first RAG stack**: Qwen3.6 generation (Ollama, OpenAI-compatible endpoint) + Qwen3-Embedding-0.6B + ChromaDB — no cloud LLM required.
+1. **Online document ingestion**: upload PDF/DOCX in the app sidebar (`POST /ingest`); files are chunked, embedded and indexed immediately, re-upload replaces by filename.
+1. **Structured citation cards**: every grounded answer carries expandable source cards (file, page, chunk id, excerpt); markdown docs show "fragment" instead of the placeholder page number.
+1. **Session history**: `GET /threads` enumerates past conversations; the sidebar lists them and resumes a thread on click.
+1. **Improvement roadmap panel**: the sidebar renders [docs/improvement-roadmap.md](docs/improvement-roadmap.md) live, so progress is visible in the UI.
 1. **LangGraph Agent and latest features**: A customizable agent built using the LangGraph framework. Implements the latest LangGraph v1.0 features including human in the loop with `interrupt()`, flow control with `Command`, long-term memory with `Store`, and `langgraph-supervisor`.
 1. **FastAPI Service**: Serves the agent with both streaming and non-streaming endpoints.
 1. **Advanced Streaming**: A novel approach to support both token-based and message-based streaming.
@@ -92,6 +97,7 @@ docker compose watch
 1. **Asynchronous Design**: Utilizes async/await for efficient handling of concurrent requests.
 1. **Content Moderation**: Implements Safeguard for content moderation (requires Groq API key).
 1. **RAG Agent**: A basic RAG agent implementation using ChromaDB - see [docs](docs/RAG_Assistant.md).
+1. **Evaluation harness**: frozen 50-question retrieval eval (`scripts/eval_retrieval.py`) plus a generation-level refusal eval (`scripts/eval_refusal.py`).
 1. **Feedback Mechanism**: Includes a star-based feedback system integrated with LangSmith.
 1. **Docker Support**: Includes Dockerfiles and a docker compose file for easy development and deployment.
 1. **Testing**: Includes robust unit and integration tests for the full repo.
