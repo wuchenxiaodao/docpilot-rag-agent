@@ -75,6 +75,17 @@ The input-side `Safeguard` depends on a Groq model and is a no-op in the local Q
 
 Both nodes are no-ops on clean traffic (return `messages: []`), so behavior is unchanged for normal questions. Graph: `tools → guard_retrieval → collect_citations → model`, and `model(done) → moderate_output → END`. Tests: `tests/agents/test_content_guard.py` (detector precision/recall + node dispatch).
 
+### Generation quality eval: faithfulness, citations, refusals (roadmap #12)
+
+Retrieval had a frozen 50-question eval and refusal a dedicated script, but nothing scored the end-to-end answer. #12 adds `scripts/eval_generation.py`: it runs the eval set through the production `rag-assistant` graph and reports three dimensions in one markdown report (no new dependencies, offline script only — product code untouched):
+
+- **Refusal accuracy, label-rot aware**: out-of-corpus labels went stale once online ingestion (#4) added those very documents, so only the 8 questions verified truly out-of-corpus (`TRULY_OUT`, per the 2026-08-23 refusal analysis) are scored as should-refuse; the 7 stale-labeled ones are reported as observation-only so the headline number isn't diluted by label rot. `in_corpus`/`multi_hop` should answer.
+- **Citation correctness at two levels (rule-based)**: *chunk level* — the structured citations (`state.citations` from `collect_citations`) must intersect the question's annotated `expected_chunk_ids` (did the answer cite the right evidence?); *source level* — names parsed from the answer's prose `Sources:` block (bullets, annotations, `Sources: None` all handled) must appear in the retrieved tool output (no fabricated filenames).
+- **Faithfulness (LLM-as-judge)**: the local Qwen itself rates each non-refused answer `supported` / `partial` / `unsupported` against the retrieved context (question-aware prompt, `CITATIONS_JSON` tail stripped from evidence, robust JSON extraction). Self-judging bias is noted in the report header; it's a relative baseline, not an absolute score. `--skip-judge` runs the mechanical checks only.
+- **Run safety**: per-question timeout (default 900 s — one historic run had a 7-hour outlier) and a per-question JSONL detail dump, so a hang or crash never loses the partial run. Flags: `--ids`, `--limit`, `--filter`, `--skip-judge`, `--timeout`, `--out`.
+
+Usage: `env -u SSL_CERT_FILE .venv/Scripts/python.exe scripts/eval_generation.py`; reports land in `evals/report_generation_quality_<timestamp>.md` with details in `evals/generation_quality_details_<timestamp>.jsonl`. Helper unit tests (25, no Ollama needed): `tests/agents/test_eval_generation.py`.
+
 **[🎥 Watch a video walkthrough of the repo and app](https://www.youtube.com/watch?v=pdYVHw_YCNY)**
 
 ## Overview
@@ -132,7 +143,7 @@ docker compose watch
 1. **Asynchronous Design**: Utilizes async/await for efficient handling of concurrent requests.
 1. **Content Moderation**: Implements Safeguard for content moderation (requires Groq API key).
 1. **RAG Agent**: A basic RAG agent implementation using ChromaDB - see [docs](docs/RAG_Assistant.md).
-1. **Evaluation harness**: frozen 50-question retrieval eval (`scripts/eval_retrieval.py`) plus a generation-level refusal eval (`scripts/eval_refusal.py`).
+1. **Evaluation harness**: frozen 50-question retrieval eval (`scripts/eval_retrieval.py`), generation-level refusal eval (`scripts/eval_refusal.py`), and end-to-end generation quality eval — faithfulness / citation correctness / refusal accuracy (`scripts/eval_generation.py`).
 1. **Feedback Mechanism**: Includes a star-based feedback system integrated with LangSmith.
 1. **Docker Support**: Includes Dockerfiles and a docker compose file for easy development and deployment.
 1. **Testing**: Includes robust unit and integration tests for the full repo.

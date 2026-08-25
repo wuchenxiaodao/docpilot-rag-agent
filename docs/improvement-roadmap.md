@@ -26,7 +26,7 @@
 
 - [x] 10. 用户体系 + 接口限流（2026-08-23 完成：`core/auth.py` 多用户 API key（JSON 文件/内联，按 mtime 缓存热重载）+ `core/ratelimit.py` 内存固定窗口限流；`verify_bearer` 解析为 `Principal` 挂 `request.state`，api-key 来源服务端钉 `user_id`（客户端不可冒充），共享 `AUTH_SECRET`/匿名仍走客户端 `user_id`（向后兼容）；`RATE_LIMIT_PER_MIN` 默认 0=关闭，命中 `/invoke`、`/stream`、`/ingest`，超限 429+Retry-After，被拒请求不占名额。无新依赖。224 测试通过（+21 新增，零退化）。详见 README「API hardening」节）
 - [x] 11. 输出侧内容审查 + 检索内容的提示注入防护（2026-08-23 完成：`agents/content_guard.py` 高精度正则检测器（提示注入/越权/系统提示泄露/越权服从），无新依赖、本地 Qwen 部署下可用（Groq 版 input safeguard 本地为 no-op）。`rag_assistant` 图新增 `guard_retrieval`（tools→guard_retrieval→collect_citations→model）扫描检索片段注入、`moderate_output`（model(done)→moderate_output→END）扫描最终答案泄露；命中只 server 警告日志 + `docpilot_safety` 前端告警，不改动原文/不阻断（正则自动改写假阳高风险，留待审查模型）。系统提示补「检索内容为不可信数据」第 10 条作为持久防御。两节点对干净流量返回 `messages:[]` 零行为变化。235 测试通过（+11，零退化）。详见 README「Content guards」节）
-- [ ] 12. 端到端生成质量评测（忠实度 / 引用正确性 / 拒答准确率，现有评测只覆盖检索层）
+- [x] 12. 端到端生成质量评测（忠实度 / 引用正确性 / 拒答准确率，现有评测只覆盖检索层）（2026-08-25 完成：`scripts/eval_generation.py` 走生产同链路（rag-assistant 图全流程）三维度统一报告。拒答区分 truly_out 8 题（08-23 拒答分析确认）应拒答与 stale 标签 7 题（#4 在线入库后实际可答，只观察不计分，避免标签腐烂稀释指标）；引用两级机械判定——chunk 级（state.citations 与标注 expected_chunk_ids 交集=引对证据）+ 来源级（回答文内 Sources: 段解析，被引名须出现在检索返回=无捏造文件）；忠实度 LLM-as-judge 复用本地 Qwen 自评（supported/partial/unsupported，判官带问题与去 CITATIONS_JSON 的证据，鲁棒 JSON 抽取；同模型自评有偏，报告已注明仅作相对基线），--skip-judge 可跳过。单题 900s 超时（历史单题 7 小时离群）+ 逐题明细 JSONL 落盘防跑挂丢档。无新依赖，纯离线脚本不动产品代码。辅助函数 25 项单测（不需 Ollama），全套 269 通过零退化；本轮 Ollama 未启动，全量线上报告待服务在线后补跑。详见 README「Generation quality eval」节）
 
 ---
 
