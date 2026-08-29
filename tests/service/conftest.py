@@ -7,6 +7,32 @@ from langchain_core.messages import AIMessage
 from service import app
 
 
+@pytest.fixture(autouse=True)
+def hermetic_redis():
+    """把 service 层单测与 Redis 隔离：QA 缓存、分布式锁、令牌桶全部短路。
+
+    不隔离的后果：前序用例写入的 QA 缓存会被后续用例命中，mock agent 的
+    astream 根本不执行（test_stream_interrupt 因此挂过）；docpilot:rl:* 令牌桶
+    键也会跨用例残留，让限流断言依赖运行顺序。
+
+    缓存命中 / 锁冲突两条新路径有专门用例显式 patch 验证；Redis 真实行为由
+    tests/cache/test_cache.py 的 docker 标记用例覆盖。
+    """
+    bucket = Mock()
+    bucket.check.side_effect = RuntimeError("Redis disabled in service unit tests")
+    with (
+        patch("service.service.lookup", return_value=None),
+        patch("service.service.store"),
+        patch("service.service.store_embedding"),
+        patch("service.service._embed_question", return_value=[0.0]),
+        patch("service.service.invalidate_all", return_value=0),
+        patch("service.service.acquire_lock", return_value="test-lock-token"),
+        patch("service.service.release_lock", return_value=True),
+        patch("service.service.redis_token_bucket", bucket),
+    ):
+        yield
+
+
 @pytest.fixture
 def test_client():
     """Fixture to create a FastAPI test client."""

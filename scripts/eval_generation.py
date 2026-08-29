@@ -47,9 +47,12 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv  # noqa: E402
 
 # tools.py 直接读 os.environ（不走 pydantic Settings），必须先把仓库 .env 装进环境变量。
-load_dotenv(os.path.join(REPO_ROOT, ".env"))
-
-sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+# 仅在直接运行脚本时执行：被 tests 导入时，模块级副作用会把 EMBEDDING_MODEL_PATH
+# 等变量泄漏进整个测试进程，污染其他用例的环境断言。agents/core 均为函数内懒导入，
+# 挪进 __main__ guard 不影响脚本独立运行。
+if __name__ == "__main__":
+    load_dotenv(os.path.join(REPO_ROOT, ".env"))
+    sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
 
 # 2026-08-23 拒答分析确认的真正库外题；其余 out_corpus（Q41-Q45/Q47/Q48）
 # 在 v2 语料下实际可答（ingest 后入库），标签过期，只观察不计分。

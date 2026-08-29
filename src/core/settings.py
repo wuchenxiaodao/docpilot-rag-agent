@@ -153,6 +153,29 @@ class Settings(BaseSettings):
     MONGO_AUTH_SOURCE: str | None = None
     MONGO_TLS: bool = False  # opt-in TLS for MongoDB; set to True for production/Atlas
 
+    # DocPilot business tables (MySQL). Separate from DATABASE_TYPE above, which
+    # only drives the LangGraph checkpointer (SQLite/Postgres/Mongo).
+    MYSQL_HOST: str = "localhost"
+    MYSQL_PORT: int = 3306
+    MYSQL_USER: str = "docpilot"
+    MYSQL_PASSWORD: SecretStr = SecretStr("docpilot123")
+    MYSQL_DB: str = "docpilot"
+    MYSQL_POOL_SIZE: int = 5
+    MYSQL_MAX_OVERFLOW: int = 10
+    MYSQL_ECHO: bool = False
+
+    # Redis Configuration (cache, distributed lock, rate limit)
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # QA cache (阶段 2)：命中即免跑 RAG 链路。TTL 内同/近似问题直接回缓存。
+    QA_CACHE_TTL_SECONDS: int = 3600
+    # 语义相似阈值：归一化向量的余弦相似度 >= 该值视为"同一个问题"
+    QA_CACHE_SIMILARITY_THRESHOLD: float = 0.95
+    # 语义回退扫描的最大条数（防缓存集无界增长时全量比对）
+    QA_CACHE_MAX_SCAN: int = 200
+    # 上传解析的分布式锁 TTL（嵌入大文件可能较慢，给足）
+    INGEST_LOCK_TTL_SECONDS: int = 300
+
     # Azure OpenAI Settings
     AZURE_OPENAI_API_KEY: SecretStr | None = None
     AZURE_OPENAI_ENDPOINT: str | None = None

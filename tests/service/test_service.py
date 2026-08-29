@@ -411,6 +411,35 @@ def test_stream_interrupt(test_client, mock_agent) -> None:
         assert messages[0]["content"]["type"] == "ai"
 
 
+def test_stream_qa_cache_hit_skips_agent(test_client, mock_agent) -> None:
+    """QA 缓存命中：SSE 直接回缓存答案，agent 不执行（省掉整条 RAG 链路）。"""
+    QUESTION = "What is the weather in Tokyo?"
+    CACHED_ANSWER = "The weather in Tokyo is sunny."
+
+    cached = {
+        "question": QUESTION,
+        "answer": CACHED_ANSWER,
+        "citations": None,
+        "hit": "exact",
+    }
+    # 覆盖 conftest 里的 hermetic_redis：本用例要的就是命中
+    with patch("service.service.lookup", return_value=cached):
+        with test_client.stream(
+            "POST", "/stream", json={"message": QUESTION, "stream_tokens": False}
+        ) as response:
+            assert response.status_code == 200
+            messages = []
+            for line in response.iter_lines():
+                if line and line.strip() != "data: [DONE]":
+                    messages.append(json.loads(line.lstrip("data: ")))
+
+    assert len(messages) == 1
+    assert messages[0]["type"] == "message"
+    assert messages[0]["content"]["content"] == CACHED_ANSWER
+    assert messages[0]["content"]["type"] == "ai"
+    mock_agent.astream.assert_not_called()
+
+
 def test_info(test_client, mock_settings) -> None:
     """Test that /info returns the correct service metadata."""
 
@@ -472,6 +501,19 @@ def test_ingest_document_propagates_value_error(test_client, mock_settings) -> N
             "/ingest", files={"file": ("empty.pdf", b"%PDF-1.4", "application/pdf")}
         )
     assert response.status_code == 400
+
+
+def test_ingest_conflict_when_lock_held(test_client, mock_settings) -> None:
+    """同名文件正在被处理（锁被别人持有）：直接 409，不进入解析。"""
+    mock_settings.AUTH_SECRET = None
+    # 覆盖 conftest 里的 hermetic_redis：模拟锁已被占用
+    with patch("service.service.acquire_lock", return_value=None):
+        response = test_client.post(
+            "/ingest",
+            files={"file": ("handbook.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+        )
+    assert response.status_code == 409
+    assert "currently being processed" in response.json()["detail"]
 
 
 def _fake_saver(checkpoints_by_thread: dict):

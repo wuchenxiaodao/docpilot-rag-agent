@@ -171,6 +171,32 @@ class IngestResponse(BaseModel):
     chunks_deleted: int = Field(
         description="Number of previous chunks of the same source replaced.", default=0
     )
+    deduplicated: bool = Field(
+        default=False, description="True if the upload hit the file-hash fast path (秒传)."
+    )
+    document_id: int | None = Field(
+        default=None, description="MySQL document row id.", examples=[42]
+    )
+
+
+class DocumentOut(BaseModel):
+    """One document row from MySQL metadata."""
+
+    id: int
+    filename: str
+    size_bytes: int
+    status: str
+    chunks_added: int
+    chunks_deleted: int
+    error_message: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class DocumentListResponse(BaseModel):
+    status: Literal["success"] = "success"
+    documents: list[DocumentOut]
+    total: int
 
 
 class ThreadInfo(BaseModel):

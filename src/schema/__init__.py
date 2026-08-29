@@ -4,6 +4,8 @@ from schema.schema import (
     ChatHistory,
     ChatHistoryInput,
     ChatMessage,
+    DocumentListResponse,
+    DocumentOut,
     Feedback,
     FeedbackResponse,
     IngestResponse,
@@ -26,4 +28,6 @@ __all__ = [
     "IngestResponse",
     "ChatHistoryInput",
     "ChatHistory",
+    "DocumentListResponse",
+    "DocumentOut",
 ]

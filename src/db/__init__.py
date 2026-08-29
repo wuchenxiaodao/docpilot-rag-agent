@@ -1,0 +1,48 @@
+from db.models import (
+    Base,
+    ChatMessage,
+    ChatSession,
+    Document,
+    DocumentStatus,
+    FeedbackEvent,
+    IngestJob,
+    MessageRole,
+)
+from db.repository import (
+    append_message,
+    compute_file_hash,
+    count_messages,
+    create_session,
+    find_document_by_hash,
+    get_session_by_id,
+    list_documents,
+    list_messages_page,
+    register_document,
+    transition_status,
+)
+from db.session import get_engine, get_session_factory, init_tables, session_scope
+
+__all__ = [
+    "Base",
+    "ChatMessage",
+    "ChatSession",
+    "Document",
+    "DocumentStatus",
+    "FeedbackEvent",
+    "IngestJob",
+    "MessageRole",
+    "append_message",
+    "compute_file_hash",
+    "count_messages",
+    "create_session",
+    "find_document_by_hash",
+    "get_engine",
+    "get_session_by_id",
+    "get_session_factory",
+    "init_tables",
+    "list_documents",
+    "list_messages_page",
+    "register_document",
+    "session_scope",
+    "transition_status",
+]
